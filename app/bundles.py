@@ -63,6 +63,13 @@ def _command(tool: str, system: str, api_url: str, api_key: str) -> str:
         if not _SAFE.fullmatch(value or ""):
             raise ValueError(f"{label} cannot be embedded in a hook command")
     source = {"cursor": "cursor", "claude": "claude_code", "codex": "codex"}[tool]
+    if system == "windows":
+        # PowerShell -Command strips double quotes, so the hook uses single quotes and $input.
+        return (
+            f"$env:MEMPLUG_API_URL='{api_url}'; "
+            f"$env:MEMPLUG_API_KEY='{api_key}'; "
+            f"$input | python -m memplug_capture hook --source {source}"
+        )
     code = (
         "import os,sys;"
         f'os.environ["MEMPLUG_API_URL"]="{api_url}";'
@@ -70,5 +77,4 @@ def _command(tool: str, system: str, api_url: str, api_key: str) -> str:
         f'sys.argv=["memplug-capture","hook","--source","{source}"];'
         "from memplug_capture.__main__ import main; main()"
     )
-    binary = "python" if system == "windows" else "python3"
-    return f"{binary} -c '{code}'"
+    return f"python3 -c '{code}'"
