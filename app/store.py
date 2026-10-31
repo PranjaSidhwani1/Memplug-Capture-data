@@ -118,6 +118,21 @@ def save_message(
         role,
         text,
     )
+    if role == "assistant":
+        log.info("assistant output session=%s\n%s", session_id, text)
+    doc = col.find_one(key, {"messages": 1, "processed_messages": 1}) or {}
+    from app.checkpoint import pending_token_count
+    from app.config import checkpoint_tokens
+
+    start = int(doc.get("processed_messages") or 0)
+    pending = pending_token_count(doc.get("messages") or [], start)
+    log.info(
+        "pending tokens since last memory source=%s session=%s tokens=%s limit=%s",
+        source,
+        session_id,
+        pending,
+        checkpoint_tokens(),
+    )
     try:
         from app.checkpoint import consider
 

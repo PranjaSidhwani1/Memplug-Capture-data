@@ -22,6 +22,18 @@ def token_count(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def pending_token_count(messages: list[dict], start: int = 0) -> int:
+    """Tokens in messages that have not been turned into a memory yet."""
+    total = 0
+    for message in messages[max(0, start) :]:
+        if not isinstance(message, dict):
+            continue
+        text = message.get("content") if isinstance(message.get("content"), str) else ""
+        if text:
+            total += token_count(text)
+    return total
+
+
 def take_batch(messages: list[dict], limit: int | None = None) -> list[dict]:
     """Whole messages from the front of the list, stopping at the token limit."""
     if limit is None:
