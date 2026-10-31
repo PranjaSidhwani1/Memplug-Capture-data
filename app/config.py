@@ -76,6 +76,15 @@ def checkpoint_tokens() -> int:
     return value if value > 0 else 1000
 
 
+def checkpoint_idle_minutes() -> int:
+    raw = os.environ.get("CHECKPOINT_IDLE_MINUTES", "30").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 30
+    return value if value > 0 else 30
+
+
 def postgres_url() -> str:
     """Neon connection string. DATABASE_URL is the name Neon shows."""
     raw = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("POSTGRES_URL", "").strip()

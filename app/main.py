@@ -19,7 +19,16 @@ from app.bundles import SYSTEMS, TOOLS, build_bundle, destination, filename
 from app.log import configure as configure_logging
 
 configure_logging()
-from app.config import api_key, auth_secret, checkpoint_tokens, meta_api_key, meta_model, postgres_url, public_api_url
+from app.config import (
+    api_key,
+    auth_secret,
+    checkpoint_idle_minutes,
+    checkpoint_tokens,
+    meta_api_key,
+    meta_model,
+    postgres_url,
+    public_api_url,
+)
 from app.security import issue_token, read_token
 from app.store import ensure_store_indexes, save_message, stats
 from app.users import (
@@ -47,7 +56,10 @@ async def _lifespan(_app: FastAPI):
         auth_secret()
     ensure_indexes()
     ensure_store_indexes()
-    log.info("CHECKPOINT_TOKENS=%s", checkpoint_tokens())
+    log.info("CHECKPOINT_TOKENS=%s CHECKPOINT_IDLE_MINUTES=%s", checkpoint_tokens(), checkpoint_idle_minutes())
+    from app.checkpoint import start_idle_sweep
+
+    start_idle_sweep()
     if postgres_url() and meta_api_key() and meta_model():
         try:
             from app.memories import ensure_schema

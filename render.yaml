@@ -24,3 +24,5 @@ services:
         sync: false
       - key: CHECKPOINT_TOKENS
         value: "1000"
+      - key: CHECKPOINT_IDLE_MINUTES
+        value: "30"
