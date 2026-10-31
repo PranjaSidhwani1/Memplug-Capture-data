@@ -1,0 +1,6 @@
+services:
+  capture:
+    build: .
+    image: memplug-capture
+    env_file:
+      - .env
