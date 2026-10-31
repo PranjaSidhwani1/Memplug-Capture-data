@@ -77,7 +77,8 @@ def _upsert_memory(conn, user_id: str, source: str, session_id: str, project: st
         SET domain = EXCLUDED.domain,
             entity = EXCLUDED.entity,
             entities = EXCLUDED.entities,
-            confidence = EXCLUDED.confidence
+            confidence = EXCLUDED.confidence,
+            updated_at = now()
         RETURNING id
         """,
         (
@@ -144,6 +145,16 @@ def _ensure_schema(conn) -> None:
                 UNIQUE (user_id, content_norm)
             )
             """
+        )
+        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_domain TEXT")
+        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_domain_norm TEXT")
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb"
+        )
+        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'")
+        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by UUID")
+        conn.execute(
+            "ALTER TABLE memories ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
         )
         conn.execute(
             """

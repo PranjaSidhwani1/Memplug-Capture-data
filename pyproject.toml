@@ -1,0 +1,22 @@
+[project]
+name = "memplug"
+version = "0.1.0"
+description = "Memplug capture API and MCP tools"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.3,<3",
+    "psycopg[binary]>=3.2",
+    "pgvector>=0.3.6",
+    "fastembed>=0.6",
+]
+
+[project.scripts]
+memory-mcp = "memory_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["memory_mcp*"]
