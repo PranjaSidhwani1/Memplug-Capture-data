@@ -27,14 +27,9 @@ def save_memories(
     url = postgres_url()
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
-    import psycopg
-    from pgvector.psycopg import register_vector
-
     vectors = _embed([item["content"] for item in memories])
     saved = 0
-    # prepare_threshold=None keeps this working on Neon's pooled connections.
-    with psycopg.connect(url, prepare_threshold=None) as conn:
-        register_vector(conn)
+    with _connect() as conn:
         _ensure_schema(conn)
         for item, vector in zip(memories, vectors, strict=True):
             memory_id = _upsert_memory(conn, user_id, source, session_id, project, item)
@@ -89,15 +84,21 @@ def _upsert_memory(conn, user_id: str, source: str, session_id: str, project: st
 
 def ensure_schema() -> None:
     """Create the memory tables on the Neon database. Safe to call on every boot."""
-    url = postgres_url()
-    if not url:
+    if not postgres_url():
         return
+    with _connect() as conn:
+        _ensure_schema(conn)
+
+
+def _connect():
     import psycopg
     from pgvector.psycopg import register_vector
 
-    with psycopg.connect(url, prepare_threshold=None) as conn:
-        register_vector(conn)
-        _ensure_schema(conn)
+    conn = psycopg.connect(postgres_url(), prepare_threshold=None)
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    conn.commit()
+    register_vector(conn)
+    return conn
 
 
 def _ensure_schema(conn) -> None:
