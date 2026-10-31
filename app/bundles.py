@@ -69,12 +69,9 @@ def _command(tool: str, system: str, api_url: str, api_key: str) -> str:
             raise ValueError(f"{label} cannot be embedded in a hook command")
     source = {"cursor": "cursor", "claude": "claude_code", "codex": "codex"}[tool]
     blob = base64.b64encode(_script(api_url, api_key, source).encode()).decode()
-    if system == "windows" and tool == "codex":
-        # Codex runs commandWindows through cmd, where double quotes hold the program.
-        return f'python -c "import base64; exec(base64.b64decode(\'{blob}\').decode())"'
     if system == "windows":
-        # Cursor and Claude run this through PowerShell. A " inside the command is
-        # removed before Python starts, so the program is single-quoted and base64.
+        # Cursor, Claude, and Codex all run this through PowerShell on Windows.
+        # A " inside the command is removed before Python starts.
         return f"python -c 'import base64; exec(base64.b64decode(''{blob}'').decode())'"
     return f"python3 -c 'import base64; exec(base64.b64decode(\"{blob}\").decode())'"
 
