@@ -5,4 +5,5 @@ dist/
 *.egg-info/
 data/
 .env
+.auth_secret
 hook-error.log
