@@ -37,13 +37,8 @@ def load_env() -> None:
         return
 
 
-def mongo_settings() -> tuple[str, str]:
-    load_env()
-    uri = os.environ.get("MONGODB_URI", "").strip()
-    name = os.environ.get("MONGODB_DB", "memplug").strip() or "memplug"
-    if not uri:
-        raise SystemExit("Set MONGODB_URI in capture/.env")
-    return uri, name
+def capture_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def capture_dir() -> Path:

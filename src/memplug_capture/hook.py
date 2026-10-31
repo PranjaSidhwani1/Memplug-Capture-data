@@ -10,7 +10,7 @@ from pathlib import Path
 from memplug_capture.adapters import events_from_hook
 from memplug_capture.config import capture_allowed
 from memplug_capture.schema import SOURCES
-from memplug_capture.store import save_message
+from memplug_capture.api_client import save_message
 
 _ERROR_LOG = Path(__file__).resolve().parents[2] / "hook-error.log"
 
