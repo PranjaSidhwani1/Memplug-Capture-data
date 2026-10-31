@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import datetime, timezone
 
@@ -12,6 +13,8 @@ from pymongo import MongoClient
 from pymongo.errors import DuplicateKeyError
 
 from app.config import mongo_db, mongo_uri
+
+log = logging.getLogger("memplug.store")
 
 _client: MongoClient | None = None
 _ready = False
@@ -83,22 +86,28 @@ def save_message(
             key,
             {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
         )
-        return True
+    else:
+        try:
+            col.insert_one(
+                {
+                    **key,
+                    "project": project,
+                    "created_at": _now(),
+                    "updated_at": _now(),
+                    "messages": [message],
+                }
+            )
+        except DuplicateKeyError:
+            col.update_one(
+                key,
+                {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
+            )
     try:
-        col.insert_one(
-            {
-                **key,
-                "project": project,
-                "created_at": _now(),
-                "updated_at": _now(),
-                "messages": [message],
-            }
-        )
-    except DuplicateKeyError:
-        col.update_one(
-            key,
-            {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
-        )
+        from app.checkpoint import consider
+
+        consider(key)
+    except Exception:
+        log.exception("memory checkpoint was not started")
     return True
 
 

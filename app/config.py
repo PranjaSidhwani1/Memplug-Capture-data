@@ -59,6 +59,33 @@ def auth_secret() -> str:
     return generated
 
 
+def meta_api_key() -> str:
+    return os.environ.get("META_API_KEY", "").strip()
+
+
+def meta_model() -> str:
+    return os.environ.get("META_MODEL", "").strip()
+
+
+def checkpoint_tokens() -> int:
+    raw = os.environ.get("CHECKPOINT_TOKENS", "1000").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 1000
+    return value if value > 0 else 1000
+
+
+def postgres_url() -> str:
+    """Neon connection string. DATABASE_URL is the name Neon shows."""
+    raw = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("POSTGRES_URL", "").strip()
+    if not raw:
+        return ""
+    if "sslmode=" not in raw:
+        raw += "&sslmode=require" if "?" in raw else "?sslmode=require"
+    return raw
+
+
 def public_api_url(fallback: str) -> str:
     configured = os.environ.get("MEMPLUG_PUBLIC_API_URL", "").strip().rstrip("/")
     if configured:
