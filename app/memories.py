@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import uuid
 
 from app.config import postgres_url
+
+log = logging.getLogger("memplug.postgres")
 
 _DIM = 384
 _MODEL_NAME = "BAAI/bge-small-en-v1.5"
@@ -33,6 +36,19 @@ def save_memories(
         _ensure_schema(conn)
         for item, vector in zip(memories, vectors, strict=True):
             memory_id = _upsert_memory(conn, user_id, source, session_id, project, item)
+            log.info(
+                "postgres saved id=%s user=%s source=%s session=%s domain=%s entity=%s type=%s confidence=%s content=%s embedding_dim=%s",
+                memory_id,
+                user_id,
+                source,
+                session_id,
+                item["domain"],
+                item["entity"],
+                item["memory_type"],
+                item["confidence"],
+                item["content"],
+                len(vector),
+            )
             conn.execute(
                 """
                 INSERT INTO memory_vectors (memory_id, embedding)

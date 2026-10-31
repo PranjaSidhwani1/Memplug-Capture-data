@@ -81,6 +81,13 @@ def save_message(
     if existing:
         for saved in existing.get("messages") or []:
             if saved.get("role") == role and saved.get("content") == text:
+                log.info(
+                    "mongo skipped duplicate source=%s session=%s user=%s role=%s",
+                    source,
+                    session_id,
+                    user_id or "",
+                    role,
+                )
                 return False
         col.update_one(
             key,
@@ -102,6 +109,15 @@ def save_message(
                 key,
                 {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
             )
+    log.info(
+        "mongo saved source=%s session=%s user=%s project=%s role=%s content=%s",
+        source,
+        session_id,
+        user_id or "",
+        project,
+        role,
+        text,
+    )
     try:
         from app.checkpoint import consider
 

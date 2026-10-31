@@ -82,8 +82,17 @@ def _run(key: dict, start: int, batch: list[dict], user_id: str, project: str) -
 
     col = database()["conversations"]
     try:
+        log.info(
+            "checkpoint start session=%s user=%s messages=%s",
+            key.get("session_id"),
+            user_id,
+            len(batch),
+        )
         memories = extract_memories(batch)
-        save_memories(user_id, str(key.get("source") or ""), str(key.get("session_id") or ""), project, memories)
+        saved = save_memories(
+            user_id, str(key.get("source") or ""), str(key.get("session_id") or ""), project, memories
+        )
+        log.info("checkpoint done session=%s memories=%s", key.get("session_id"), saved)
         col.update_one(
             {**key, "$expr": {"$eq": [{"$ifNull": ["$processed_messages", 0]}, start]}},
             {

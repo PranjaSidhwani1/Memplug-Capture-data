@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 
 from app.config import meta_api_key, meta_model
 from app.domains import catalogue_text, resolve_domain
+
+log = logging.getLogger("memplug.llm")
 
 _API_URL = "https://api.meta.ai/v1/chat/completions"
 _TYPES = {"fact", "preference", "decision", "plan"}
@@ -16,7 +19,9 @@ _MIN_CONFIDENCE = 0.55
 
 def extract_memories(messages: list[dict]) -> list[dict]:
     raw = _complete(_prompt(messages))
-    return accepted_memories(raw)
+    memories = accepted_memories(raw)
+    log.info("llm accepted %s memories", len(memories))
+    return memories
 
 
 def accepted_memories(payload: dict) -> list[dict]:
@@ -80,6 +85,7 @@ def _complete(prompt: str) -> dict:
     model = meta_model()
     if not key or not model:
         raise RuntimeError("META_API_KEY and META_MODEL must be set")
+    log.info("llm input model=%s\n%s", model, prompt)
     body = {
         "model": model,
         "temperature": 0,
@@ -96,6 +102,7 @@ def _complete(prompt: str) -> dict:
     content = payload["choices"][0]["message"]["content"]
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("Meta model returned an empty response")
+    log.info("llm output model=%s\n%s", model, content)
     return _json_object(content)
 
 
