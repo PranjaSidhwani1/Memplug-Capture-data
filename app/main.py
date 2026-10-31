@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.bundles import SYSTEMS, TOOLS, build_bundle, destination, filename
-from app.config import api_key, auth_secret, public_api_url
+from app.config import api_key, auth_secret, checkpoint_tokens, meta_api_key, meta_model, postgres_url, public_api_url
 from app.security import issue_token, read_token
 from app.store import ensure_store_indexes, save_message, stats
 from app.users import (
@@ -34,12 +35,26 @@ _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _UI_DIST = Path(__file__).resolve().parents[1] / "ui" / "dist"
 
 
+log = logging.getLogger("uvicorn.error")
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     if _ON_RENDER:
         auth_secret()
     ensure_indexes()
     ensure_store_indexes()
+    log.info("CHECKPOINT_TOKENS=%s", checkpoint_tokens())
+    if postgres_url() and meta_api_key() and meta_model():
+        try:
+            from app.memories import ensure_schema
+
+            ensure_schema()
+            log.info("memory tables ready")
+        except Exception:
+            log.exception("memory tables were not created")
+    else:
+        log.info("memory extraction is waiting for META_API_KEY, META_MODEL, and DATABASE_URL")
     yield
 
 

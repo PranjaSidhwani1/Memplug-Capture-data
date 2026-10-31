@@ -87,6 +87,19 @@ def _upsert_memory(conn, user_id: str, source: str, session_id: str, project: st
     return row[0]
 
 
+def ensure_schema() -> None:
+    """Create the memory tables on the Neon database. Safe to call on every boot."""
+    url = postgres_url()
+    if not url:
+        return
+    import psycopg
+    from pgvector.psycopg import register_vector
+
+    with psycopg.connect(url, prepare_threshold=None) as conn:
+        register_vector(conn)
+        _ensure_schema(conn)
+
+
 def _ensure_schema(conn) -> None:
     global _schema_ready
     if _schema_ready:
