@@ -1,0 +1,533 @@
+:root {
+  --bg: #08090b;
+  --plate: #101216;
+  --panel: #0c0d10;
+  --ink: #f3f4f6;
+  --silver: #c5c8d0;
+  --dim: #8d929c;
+  --line: rgba(197, 200, 208, 0.22);
+  --line-strong: rgba(197, 200, 208, 0.55);
+  --red: #e23a32;
+  --red-deep: #8e1d18;
+  --danger: #ff6b63;
+  color: var(--ink);
+  font-family: "Outfit", "Segoe UI", sans-serif;
+  font-weight: 360;
+  background: var(--bg);
+  letter-spacing: 0.01em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(880px 420px at 0% 0%, rgba(226, 58, 50, 0.16), transparent 58%),
+    linear-gradient(180deg, #0e1014 0%, var(--bg) 32%);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.boot {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  color: var(--silver);
+}
+
+.mark {
+  width: 42px;
+  height: 42px;
+  fill: none;
+  stroke: var(--silver);
+  stroke-width: 1.6;
+}
+
+.mark path {
+  stroke: var(--red);
+}
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+}
+
+.plate {
+  padding: 48px 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-right: 1px solid var(--line);
+  background:
+    linear-gradient(160deg, rgba(197, 200, 208, 0.05), transparent 42%),
+    var(--plate);
+}
+
+.plate-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: auto;
+  color: var(--silver);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--red);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 480;
+  letter-spacing: -0.03em;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(44px, 5vw, 72px);
+  line-height: 0.96;
+  max-width: 11ch;
+}
+
+.lede {
+  max-width: 46ch;
+  color: var(--silver);
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.lede.tight {
+  font-size: 15px;
+  margin-top: 0;
+}
+
+.specs {
+  list-style: none;
+  padding: 0;
+  margin: 28px 0 0;
+  display: flex;
+  gap: 28px;
+  color: var(--silver);
+}
+
+.specs span {
+  display: block;
+  color: var(--dim);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.panel {
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--panel);
+}
+
+.mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line-strong);
+  margin-bottom: 28px;
+}
+
+.mode button,
+.os button,
+.who button,
+.key-list .danger,
+.reveal button,
+.card button {
+  background: transparent;
+  border: 0;
+  padding: 12px 14px;
+  color: var(--dim);
+}
+
+.mode button.on,
+.os button.on {
+  background: var(--ink);
+  color: #111;
+}
+
+form,
+.mint {
+  display: grid;
+  gap: 16px;
+}
+
+label {
+  display: grid;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+input {
+  background: #07080a;
+  border: 1px solid var(--line-strong);
+  padding: 12px 14px;
+  outline: none;
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 16px;
+}
+
+input::placeholder {
+  color: #5e646e;
+}
+
+input:focus {
+  border-color: var(--silver);
+}
+
+.primary {
+  margin-top: 8px;
+  border: 0;
+  background: var(--red);
+  color: white;
+  padding: 14px 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.primary:hover {
+  background: #ff4d44;
+}
+
+.primary:disabled,
+.card button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+
+.hint,
+.notice,
+.error,
+.endpoint {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.hint,
+.endpoint {
+  color: var(--dim);
+}
+
+.error {
+  color: var(--danger);
+}
+
+.notice {
+  color: var(--silver);
+}
+
+.console {
+  min-height: 100vh;
+}
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--line);
+  background: #08090b;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.brand,
+.who {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand strong {
+  display: block;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+.brand span,
+.who span {
+  color: var(--dim);
+  font-size: 13px;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.who button {
+  border: 1px solid var(--line-strong);
+  color: var(--silver);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.2fr);
+  min-height: calc(100vh - 73px);
+}
+
+.keys,
+.drops {
+  padding: 32px;
+}
+
+.keys {
+  border-right: 1px solid var(--line);
+}
+
+.section-head.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 32px;
+}
+
+.mint {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  margin: 22px 0;
+}
+
+.mint .primary {
+  margin-top: 0;
+  height: 46px;
+}
+
+.reveal {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  background: linear-gradient(90deg, rgba(226, 58, 50, 0.14), transparent 40%);
+  margin-bottom: 18px;
+}
+
+.reveal code {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink);
+  word-break: break-all;
+  font-size: 13px;
+}
+
+.reveal button,
+.card button {
+  border: 1px solid var(--line-strong);
+  color: var(--silver);
+  white-space: nowrap;
+}
+
+.reveal button:hover,
+.card button:hover,
+.who button:hover {
+  border-color: var(--silver);
+  color: var(--ink);
+}
+
+.key-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.key-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.key-list label {
+  display: flex;
+  grid-template-columns: none;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+}
+
+.key-list strong {
+  display: block;
+  font-weight: 480;
+}
+
+.key-list code,
+.path {
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.danger {
+  color: var(--danger) !important;
+  padding-inline: 0 !important;
+}
+
+.empty {
+  color: var(--dim);
+  border: 0 !important;
+}
+
+.os {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--line-strong);
+  min-width: 220px;
+}
+
+.endpoint {
+  margin: 14px 0 22px;
+}
+
+.endpoint code,
+.lede code {
+  color: var(--silver);
+  font-size: 0.92em;
+}
+
+.cards {
+  display: grid;
+  gap: 14px;
+}
+
+.card {
+  border: 1px solid var(--line-strong);
+  padding: 18px;
+  background: rgba(16, 18, 22, 0.72);
+}
+
+.card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.card h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.card header span {
+  color: var(--red);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+.card p {
+  color: var(--silver);
+  margin: 8px 0;
+}
+
+.path {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: #07080a;
+  color: var(--silver);
+}
+
+.card .hint {
+  min-height: 2.8em;
+}
+
+.card button {
+  width: 100%;
+  margin-top: 8px;
+}
+
+@media (max-width: 960px) {
+  .gate,
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .plate {
+    min-height: auto;
+    padding: 32px 24px 28px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .plate-top {
+    margin-bottom: 36px;
+  }
+
+  h1 {
+    font-size: 46px;
+  }
+
+  .panel,
+  .keys,
+  .drops {
+    padding: 24px;
+  }
+
+  .keys {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .section-head.row,
+  .mint {
+    display: grid;
+  }
+
+  .bar {
+    align-items: center;
+  }
+
+  .mint {
+    grid-template-columns: 1fr;
+  }
+}
