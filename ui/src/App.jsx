@@ -396,8 +396,8 @@ function Console({ token, user, onSignOut }) {
             </div>
           </div>
           <p className="lede tight">
-            Install capture on that machine so Python can import <code>memplug_capture</code>, then save the file at the
-            path on the card. The chosen key is written into the command.
+            Save this file at the path on the card. It is the whole hook: the command inside it reads the editor
+            event and posts it. Python 3 has to be on PATH. Nothing else is installed.
           </p>
           {meta?.api_url && (
             <p className="endpoint">
