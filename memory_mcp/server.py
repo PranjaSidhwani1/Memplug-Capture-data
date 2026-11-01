@@ -58,7 +58,7 @@ mcp = MCPServer(
         "Call get_user_context at the start of a task. "
         "Call search_memory for a narrower lookup. "
         "Call save_memory only when the user asks you to remember a specific fact. "
-        "Call list_domains before suggesting a domain. "
+        "Call list_domains to see the domains this user already has memories in. "
         "Call list_sub_domains with a domain to see the groupings inside it. "
         "Do not edit or delete memories. The user does that in the Memplug UI."
     ),
@@ -151,10 +151,10 @@ def get_user_context(task: str, domains: list[str] | None = None) -> dict:
 
 @mcp.tool()
 def list_domains() -> dict:
-    """List domains this application may use, with descriptions.
+    """List domains this user already has memories in, with descriptions.
 
-    Call this before suggesting a domain to save_memory. A domain is one
-    vector database collection. This tool takes no arguments.
+    A domain with no memories for this user is omitted. This tool takes no
+    arguments. save_memory can still use any granted catalogue domain.
     """
     store = _store()
     if isinstance(store, dict):

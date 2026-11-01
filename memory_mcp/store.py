@@ -139,8 +139,29 @@ class MemoryStore:
     def list_domains(self) -> dict:
         from memory_mcp.domains import catalogue
 
-        visible = [item for item in catalogue() if item["name"] in self.granted_domains]
-        return {"domains": visible}
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT domain
+                    FROM memories
+                    WHERE user_id = %s
+                      AND status = 'active'
+                      AND domain <> ''
+                    """,
+                    (self.user_id,),
+                ).fetchall()
+        except Exception:
+            log.exception("list_domains failed")
+            return {"status": "retryable_error", "reason": "domains could not be loaded", "domains": []}
+
+        owned = {row[0] for row in rows if row[0] in self.granted_domains}
+        described = {item["name"]: item["description"] for item in catalogue()}
+        domains = [
+            {"name": name, "description": described.get(name, "")}
+            for name in sorted(owned, key=str.casefold)
+        ]
+        return {"domains": domains}
 
     def list_sub_domains(self, domain: str) -> dict:
         suggested = domain.strip() if isinstance(domain, str) else ""
@@ -273,13 +294,13 @@ class MemoryStore:
 
         near = conn.execute(
             """
-            SELECT m.id, 1 - (v.embedding <=> %s) AS similarity
+            SELECT m.id, 1 - (v.embedding <=> %s::vector) AS similarity
             FROM memories m
             JOIN memory_vectors v ON v.memory_id = m.id
             WHERE m.user_id = %s
               AND m.domain = %s
               AND m.status = 'active'
-            ORDER BY v.embedding <=> %s
+            ORDER BY v.embedding <=> %s::vector
             LIMIT 1
             """,
             (vector, self.user_id, domain, vector),
@@ -341,7 +362,7 @@ class MemoryStore:
                 m.updated_at,
                 m.source_event_ids,
                 (
-                    0.5 * CASE WHEN v.embedding IS NULL THEN 0 ELSE 1 - (v.embedding <=> %s) END
+                    0.5 * CASE WHEN v.embedding IS NULL THEN 0 ELSE 1 - (v.embedding <=> %s::vector) END
                     + 0.5 * LEAST(
                         ts_rank_cd(to_tsvector('english', m.content), plainto_tsquery('english', %s)),
                         1
