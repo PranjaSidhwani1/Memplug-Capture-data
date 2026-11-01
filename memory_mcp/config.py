@@ -58,6 +58,23 @@ def _granted_domains() -> frozenset[str]:
     return frozenset(granted)
 
 
+def database_url() -> str:
+    raw = os.environ.get("DATABASE_URL", "").strip() or os.environ.get("POSTGRES_URL", "").strip()
+    if not raw:
+        return ""
+    if "sslmode=" not in raw:
+        raw += "&sslmode=require" if "?" in raw else "?sslmode=require"
+    return raw
+
+
+def public_base_url() -> str:
+    configured = os.environ.get("MEMPLUG_PUBLIC_API_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+    external = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    return external or "http://127.0.0.1:8000"
+
+
 def load_settings() -> Settings:
     port_raw = os.environ.get("MEMPLUG_PORT", "8000")
     try:
@@ -70,20 +87,18 @@ def load_settings() -> Settings:
         raise SystemExit("MEMPLUG_TRANSPORT must be 'streamable-http' or 'stdio'")
 
     user_id = os.environ.get("MEMPLUG_USER_ID", "").strip()
-    if not user_id:
+    if transport == "stdio" and not user_id:
         raise SystemExit("MEMPLUG_USER_ID is not set. Use the Mongo user id that owns the memories.")
 
-    database_url = os.environ.get("DATABASE_URL", "").strip()
-    if not database_url:
+    url = database_url()
+    if not url:
         raise SystemExit("DATABASE_URL is not set")
-    if "sslmode=" not in database_url:
-        database_url += "&sslmode=require" if "?" in database_url else "?sslmode=require"
 
     return Settings(
-        host=os.environ.get("MEMPLUG_HOST", "127.0.0.1"),
+        host=os.environ.get("MEMPLUG_HOST", "0.0.0.0"),
         port=port,
         transport=transport,
         user_id=user_id,
-        database_url=database_url,
+        database_url=url,
         granted_domains=_granted_domains(),
     )

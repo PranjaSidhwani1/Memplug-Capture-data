@@ -38,6 +38,14 @@ class MemoryStore:
             self._ensure_schema(conn)
             conn.commit()
 
+    def for_user(self, user_id: str) -> MemoryStore:
+        """Same database and grant, scoped to one user. Does not reconnect."""
+        scoped = object.__new__(MemoryStore)
+        scoped.user_id = user_id
+        scoped.granted_domains = self.granted_domains
+        scoped._url = self._url
+        return scoped
+
     def save(
         self,
         content: str,

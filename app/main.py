@@ -70,7 +70,16 @@ async def _lifespan(_app: FastAPI):
             log.exception("memory tables were not created")
     else:
         log.info("memory extraction is waiting for META_API_KEY, META_MODEL, and DATABASE_URL")
-    yield
+    if postgres_url():
+        try:
+            from memory_mcp.server import warmup
+
+            warmup()
+        except Exception:
+            log.exception("mcp memory store was not opened")
+    async with _mcp_http.router.lifespan_context(_mcp_http):
+        log.info("mcp endpoint /mcp")
+        yield
 
 
 _ON_RENDER = os.environ.get("RENDER", "").strip().lower() in {"1", "true", "yes"}
@@ -94,6 +103,24 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+from memory_mcp.server import http_app as mcp_http_app
+
+_mcp_http = mcp_http_app()
+
+
+class _McpEndpoint:
+    """Serve the MCP app at /mcp. A function route would not receive the raw ASGI call."""
+
+    async def __call__(self, scope, receive, send):
+        scope = dict(scope)
+        scope["path"] = "/"
+        scope["raw_path"] = b"/"
+        await _mcp_http(scope, receive, send)
+
+
+app.add_route("/mcp", _McpEndpoint())
+app.add_route("/mcp/", _McpEndpoint())
 
 
 class MessageIn(BaseModel):
