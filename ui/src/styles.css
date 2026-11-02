@@ -292,9 +292,177 @@ input:focus {
   white-space: nowrap;
 }
 
+.who a {
+  color: var(--silver);
+  text-decoration: none;
+}
+
+.who a:hover {
+  color: var(--ink);
+}
+
 .who button {
   border: 1px solid var(--line-strong);
   color: var(--silver);
+}
+
+.status {
+  margin: 0;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.desk {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 8px 28px 80px;
+}
+
+.desk .band {
+  padding: 36px 0;
+}
+
+.space-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.space {
+  border: 1px solid var(--line);
+  background: rgba(16, 18, 22, 0.72);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.space.on {
+  border-color: var(--red);
+}
+
+.space-pick {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.space-pick span {
+  color: var(--red);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.space-pick strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 480;
+}
+
+.space-pick p,
+.team-actions p,
+.mcp p {
+  color: var(--silver);
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.code-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.code-row code {
+  letter-spacing: 0.12em;
+  color: var(--ink);
+}
+
+.code-row button,
+.mcp button {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--silver);
+  padding: 8px 12px;
+}
+
+.team-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.team-actions form,
+.mcp {
+  border: 1px solid var(--line);
+  padding: 16px;
+  background: rgba(16, 18, 22, 0.72);
+}
+
+.team-actions h3,
+.mcp h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.key-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+  max-width: 680px;
+  margin: 18px 0;
+}
+
+.key-form .primary {
+  margin-top: 0;
+  height: 46px;
+}
+
+.mcp {
+  margin-top: 22px;
+}
+
+.mcp .section-head p {
+  margin-bottom: 0;
+}
+
+.mcp pre {
+  margin: 14px 0 0;
+  padding: 14px;
+  background: #07080a;
+  border: 1px solid var(--line);
+  overflow: auto;
+  color: var(--silver);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.danger.text {
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.contact-mail {
+  margin: 0;
+  align-self: end;
+}
+
+.contact-mail a {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 18px;
 }
 
 .workspace {
@@ -707,8 +875,19 @@ h2 {
 
   .offer,
   .split,
-  .steps li {
+  .steps li,
+  .team-actions,
+  .key-form {
     grid-template-columns: 1fr;
+  }
+
+  .desk {
+    padding-inline: 20px;
+  }
+
+  .who {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .hero-actions {

@@ -16,6 +16,13 @@ import {
   storeToken,
 } from "./api.js";
 
+const SUPPORT_EMAIL = "pranjaysidhwani@gmail.com";
+
+function contactHref(topic) {
+  const subject = encodeURIComponent(topic);
+  return `mailto:${SUPPORT_EMAIL}?subject=${subject}`;
+}
+
 const TOOLS = [
   {
     id: "cursor",
@@ -134,6 +141,7 @@ function ProductPage({ onSession }) {
           </div>
         </div>
         <div className="who">
+          <a href={contactHref("Memplug")}>Contact</a>
           <button type="button" onClick={() => setAuth("login")}>
             Sign in
           </button>
@@ -260,6 +268,19 @@ function ProductPage({ onSession }) {
             Create account
           </button>
         </section>
+        <section className="band split" id="contact">
+          <div>
+            <p className="eyebrow">Contact</p>
+            <h2>When a hook, a key, or a team will not work.</h2>
+            <p className="lede tight">
+              Write with the editor, the workspace, and what you expected to happen. Personal and
+              team keys are separate, so say which one you used.
+            </p>
+          </div>
+          <p className="contact-mail">
+            <a href={contactHref("Memplug issue")}>{SUPPORT_EMAIL}</a>
+          </p>
+        </section>
       </main>
     </div>
   );
@@ -370,6 +391,27 @@ function AuthScreen({ mode: initialMode, onMode, onBack, onSession }) {
   );
 }
 
+function belongsToWorkspace(item, workspace) {
+  const kind = item.workspace_type || "user";
+  if (!workspace) return kind !== "team";
+  return kind === "team" && item.workspace_id === workspace;
+}
+
+function mcpConfig(url, key) {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        memplug: {
+          url: url || "https://your-memplug-host/mcp",
+          headers: { Authorization: `Bearer ${key || "<key for this workspace>"}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 function Console({ token, user, onSignOut }) {
   const [keys, setKeys] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -382,8 +424,10 @@ function Console({ token, user, onSignOut }) {
   const [fresh, setFresh] = useState(null);
   const [system, setSystem] = useState("mac");
   const [error, setError] = useState("");
+  const [teamError, setTeamError] = useState("");
   const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [teamBusy, setTeamBusy] = useState(false);
   const [downloading, setDownloading] = useState("");
 
   useEffect(() => {
@@ -405,21 +449,18 @@ function Console({ token, user, onSignOut }) {
   }, [token]);
 
   useEffect(() => {
-    const visible = keys.filter((item) => {
-      const kind = item.workspace_type || "user";
-      if (!workspace) return kind !== "team";
-      return kind === "team" && item.workspace_id === workspace;
-    });
+    const visible = keys.filter((item) => belongsToWorkspace(item, workspace));
     if (!visible.some((item) => item.id === selected)) {
       setSelected(visible[0]?.id || "");
     }
+    setFresh((current) => (current && belongsToWorkspace(current, workspace) ? current : null));
   }, [keys, workspace, selected]);
 
   async function mint(event) {
     event.preventDefault();
     setError("");
     setNotice("");
-    setBusy(true);
+    setKeyBusy(true);
     try {
       const created = await createKey(token, keyName.trim() || "default", workspace);
       setFresh(created);
@@ -427,10 +468,15 @@ function Console({ token, user, onSignOut }) {
       const next = await listKeys(token);
       setKeys(next.keys);
       setSelected(created.id);
+      setNotice(
+        created.workspace_type === "team"
+          ? "Team key created. It reads and writes this team only. Copy it now."
+          : "Personal key created. It reads and writes your memories only. Copy it now.",
+      );
     } catch (err) {
       setError(err.message);
     } finally {
-      setBusy(false);
+      setKeyBusy(false);
     }
   }
 
@@ -467,16 +513,6 @@ function Console({ token, user, onSignOut }) {
     }
   }
 
-  async function copyKey() {
-    if (!fresh?.key) return;
-    try {
-      await navigator.clipboard.writeText(fresh.key);
-      setNotice("Key copied.");
-    } catch {
-      setError("Select the key and copy it manually.");
-    }
-  }
-
   async function refreshTeams(selectId) {
     const payload = await listTeams(token);
     setTeams(payload.teams);
@@ -485,60 +521,73 @@ function Console({ token, user, onSignOut }) {
 
   async function makeTeam(event) {
     event.preventDefault();
-    setError("");
+    setTeamError("");
     setNotice("");
-    setBusy(true);
+    setTeamBusy(true);
     try {
       const created = await createTeam(token, teamName.trim());
       setTeamName("");
       await refreshTeams(created.id);
-      setNotice(`Team ${created.name} is ready. Share the join code.`);
+      setNotice(`${created.name} is ready. Share the join code on that team card. A key for it is a separate step.`);
     } catch (err) {
-      setError(err.message);
+      setTeamError(err.message);
     } finally {
-      setBusy(false);
+      setTeamBusy(false);
     }
   }
 
   async function enterTeam(event) {
     event.preventDefault();
-    setError("");
+    setTeamError("");
     setNotice("");
-    setBusy(true);
+    setTeamBusy(true);
     try {
       const joined = await joinTeam(token, joinCode.trim());
       setJoinCode("");
       await refreshTeams(joined.id);
-      setNotice(joined.role === "owner" ? `You already own ${joined.name}.` : `You joined ${joined.name}.`);
+      setNotice(
+        joined.role === "owner"
+          ? `You already own ${joined.name}.`
+          : `You joined ${joined.name}. Create a key for it before you download a hook.`,
+      );
     } catch (err) {
-      setError(err.message);
+      setTeamError(err.message);
     } finally {
-      setBusy(false);
+      setTeamBusy(false);
     }
   }
 
-  async function exitTeam() {
-    if (!activeTeam) return;
-    setError("");
+  async function exitTeam(team) {
+    setTeamError("");
     setNotice("");
     try {
-      await leaveTeam(token, activeTeam.id);
-      setWorkspace("");
+      await leaveTeam(token, team.id);
+      if (workspace === team.id) setWorkspace("");
       await refreshTeams("");
-      setNotice(`You left ${activeTeam.name}.`);
+      setNotice(`You left ${team.name}. Keys you made for it no longer open that memory.`);
     } catch (err) {
-      setError(err.message);
+      setTeamError(err.message);
+    }
+  }
+
+  async function copyText(value, ok) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice(ok);
+      setError("");
+      setTeamError("");
+    } catch {
+      setError("Select the text and copy it manually.");
     }
   }
 
   const osLabel = system === "mac" ? "macOS" : "Windows";
   const activeTeam = teams.find((item) => item.id === workspace) || null;
-  const visibleKeys = keys.filter((item) => {
-    const kind = item.workspace_type || "user";
-    if (!workspace) return kind !== "team";
-    return kind === "team" && item.workspace_id === workspace;
-  });
+  const visibleKeys = keys.filter((item) => belongsToWorkspace(item, workspace));
   const workspaceLabel = activeTeam ? activeTeam.name : "Personal";
+  const keyKind = activeTeam ? "team" : "personal";
+  const mcpUrl = meta?.api_url ? `${meta.api_url.replace(/\/$/, "")}/mcp` : "";
+  const snippet = mcpConfig(mcpUrl, fresh?.key || "");
 
   return (
     <div className="console">
@@ -547,109 +596,178 @@ function Console({ token, user, onSignOut }) {
           <Mark />
           <div>
             <strong>Memplug</strong>
-            <span>Capture</span>
+            <span>Console</span>
           </div>
         </div>
         <div className="who">
+          <a href="#process">Setup</a>
+          <a href={contactHref("Memplug issue")}>Contact</a>
           <span>{user.name || user.email}</span>
           <button type="button" onClick={onSignOut}>
             Sign out
           </button>
         </div>
       </header>
-      <div className="workspace">
-        <section className="keys">
+      {(error || notice) && <p className={error ? "error status" : "notice status"}>{error || notice}</p>}
+      <main className="desk">
+        <section className="band" id="process">
           <div className="section-head">
-            <p className="eyebrow">Workspace</p>
-            <h2>Personal or team</h2>
+            <p className="eyebrow">After you sign in</p>
+            <h2>Connect this account to an editor.</h2>
           </div>
-          <div className="spaces" role="group" aria-label="Workspace">
-            <button type="button" className={workspace === "" ? "on" : ""} onClick={() => setWorkspace("")}>
-              Personal
-            </button>
-            {teams.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={workspace === item.id ? "on" : ""}
-                onClick={() => setWorkspace(item.id)}
-              >
-                {item.name}
-              </button>
-            ))}
-          </div>
-          <form className="mint" onSubmit={makeTeam}>
-            <label>
-              New team
-              <input
-                value={teamName}
-                onChange={(event) => setTeamName(event.target.value)}
-                placeholder="Studio"
-                maxLength={80}
-              />
-            </label>
-            <button className="primary" type="submit" disabled={busy || !teamName.trim()}>
-              Create
-            </button>
-          </form>
-          <form className="mint" onSubmit={enterTeam}>
-            <label>
-              Join code
-              <input
-                value={joinCode}
-                onChange={(event) => setJoinCode(event.target.value)}
-                placeholder="A1B2C3D4"
-                maxLength={32}
-              />
-            </label>
-            <button className="primary" type="submit" disabled={busy || !joinCode.trim()}>
-              Join
-            </button>
-          </form>
-          {activeTeam && (
-            <div className="team-note">
-              <p>
-                {activeTeam.role === "owner"
-                  ? `You own ${activeTeam.name}. Share this code so someone can join.`
-                  : `You are a member of ${activeTeam.name}.`}
-              </p>
-              {activeTeam.role === "owner" && <code>{activeTeam.join_code}</code>}
-              {activeTeam.role !== "owner" && (
-                <button type="button" className="danger" onClick={exitTeam}>
-                  Leave team
-                </button>
-              )}
-            </div>
-          )}
+          <ol className="steps">
+            <li>
+              <span>01</span>
+              <div>
+                <h3>Open one workspace</h3>
+                <p>
+                  Personal is your own memory. Create a team when several people should share one memory, then
+                  send the join code. Joining does not create a key.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span>02</span>
+              <div>
+                <h3>Create the key inside that workspace</h3>
+                <p>
+                  The open card decides the key. A personal key never reads a team. A team key never reads your
+                  personal memory, and it never reads another team. You need one key per workspace you use.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span>03</span>
+              <div>
+                <h3>Download the hook for the selected key</h3>
+                <p>
+                  Choose the editor and macOS or Windows. The JSON already contains the selected key. Save it at
+                  the path on the card and restart the editor. Python 3 has to be on PATH. Nothing else is installed
+                  on the machine.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span>04</span>
+              <div>
+                <h3>Add MCP with that same key</h3>
+                <p>
+                  The agent does not send a user id. The key is the workspace. Paste the config below into Cursor.
+                  Memories are written when a conversation crosses the token checkpoint, or after 30 minutes of
+                  quiet. The raw chat stays. The memory is what the agent can search later.
+                </p>
+              </div>
+            </li>
+          </ol>
+        </section>
+
+        <section className="band" id="workspaces">
           <div className="section-head">
-            <p className="eyebrow">Account</p>
-            <h2>API keys</h2>
+            <p className="eyebrow">Workspaces</p>
+            <h2>Choose where the next key belongs.</h2>
           </div>
           <p className="lede tight">
-            A key is minted for {workspaceLabel}. The hook JSON carries that key, and the server treats every call as{" "}
-            {activeTeam ? "that team" : "your personal memory"}.
+            Open a card first. Create and join only change membership. They do not mint a key.
           </p>
-          <form className="mint" onSubmit={mint}>
+          <div className="space-grid">
+            <article className={workspace === "" ? "space on" : "space"}>
+              <button type="button" className="space-pick" onClick={() => setWorkspace("")}>
+                <span>Account</span>
+                <strong>Personal</strong>
+                <p>Your memories only. Open this before you create a personal key.</p>
+              </button>
+            </article>
+            {teams.map((item) => (
+              <article key={item.id} className={workspace === item.id ? "space on" : "space"}>
+                <button type="button" className="space-pick" onClick={() => setWorkspace(item.id)}>
+                  <span>{item.role === "owner" ? "Owner" : "Member"}</span>
+                  <strong>{item.name}</strong>
+                  <p>Team memory only. A key made while this card is open belongs to {item.name}.</p>
+                </button>
+                {item.role === "owner" ? (
+                  <div className="code-row">
+                    <code>{item.join_code}</code>
+                    <button type="button" onClick={() => copyText(item.join_code, "Join code copied.")}>
+                      Copy code
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" className="danger text" onClick={() => exitTeam(item)}>
+                    Leave team
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+          <div className="team-actions">
+            <form onSubmit={makeTeam}>
+              <h3>Create a team</h3>
+              <p>You become the owner. The card shows a join code you can send.</p>
+              <label>
+                Team name
+                <input
+                  value={teamName}
+                  onChange={(event) => setTeamName(event.target.value)}
+                  placeholder="Studio"
+                  maxLength={80}
+                />
+              </label>
+              <button className="primary" type="submit" disabled={teamBusy || !teamName.trim()}>
+                {teamBusy ? "Creating" : "Create team"}
+              </button>
+            </form>
+            <form onSubmit={enterTeam}>
+              <h3>Join a team</h3>
+              <p>Use the code the owner sent. You can then create a key for that team.</p>
+              <label>
+                Join code
+                <input
+                  value={joinCode}
+                  onChange={(event) => setJoinCode(event.target.value)}
+                  placeholder="A1B2C3D4"
+                  maxLength={32}
+                  autoCapitalize="characters"
+                />
+              </label>
+              <button className="primary" type="submit" disabled={teamBusy || !joinCode.trim()}>
+                {teamBusy ? "Joining" : "Join team"}
+              </button>
+            </form>
+          </div>
+          {teamError && <p className="error">{teamError}</p>}
+        </section>
+
+        <section className="band" id="keys">
+          <div className="section-head">
+            <p className="eyebrow">{keyKind === "team" ? "Team key" : "Personal key"}</p>
+            <h2>{keyKind === "team" ? `Key for ${workspaceLabel}` : "Key for your account"}</h2>
+          </div>
+          <p className="lede tight">
+            {activeTeam
+              ? `This creates a team key. Capture and MCP calls with it read and write ${activeTeam.name} only.`
+              : "This creates a personal key. Capture and MCP calls with it read and write your memories only."}
+          </p>
+          <form className="key-form" onSubmit={mint}>
             <label>
               Label
               <input
                 value={keyName}
                 onChange={(event) => setKeyName(event.target.value)}
-                placeholder="laptop"
+                placeholder={activeTeam ? "studio-laptop" : "laptop"}
                 maxLength={40}
               />
             </label>
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? "Minting" : "Create key"}
+            <button className="primary" type="submit" disabled={keyBusy}>
+              {keyBusy ? "Creating" : keyKind === "team" ? "Create team key" : "Create personal key"}
             </button>
           </form>
-          {fresh && (
+          {fresh && belongsToWorkspace(fresh, workspace) && (
             <div className="reveal">
               <div>
-                <p className="eyebrow">New key</p>
+                <p className="eyebrow">{fresh.workspace_type === "team" ? "Team key" : "Personal key"}</p>
                 <code>{fresh.key}</code>
               </div>
-              <button type="button" onClick={copyKey}>
+              <button type="button" onClick={() => copyText(fresh.key, "Key copied.")}>
                 Copy
               </button>
             </div>
@@ -667,7 +785,9 @@ function Console({ token, user, onSignOut }) {
                   />
                   <span>
                     <strong>{item.name}</strong>
-                    <code>{item.prefix}…</code>
+                    <code>
+                      {item.workspace_type === "team" ? "Team" : "Personal"} · {item.prefix}…
+                    </code>
                   </span>
                 </label>
                 <button type="button" className="danger" onClick={() => revoke(item.id)}>
@@ -676,31 +796,27 @@ function Console({ token, user, onSignOut }) {
               </li>
             ))}
           </ul>
-          {error && <p className="error">{error}</p>}
-          {notice && <p className="notice">{notice}</p>}
         </section>
-        <section className="drops">
+
+        <section className="band" id="install">
           <div className="section-head row">
             <div>
               <p className="eyebrow">Install</p>
-              <h2>Hook files</h2>
+              <h2>Hook file for {workspaceLabel}</h2>
             </div>
             <div className="os" role="group" aria-label="Operating system">
               <button type="button" className={system === "mac" ? "on" : ""} onClick={() => setSystem("mac")}>
                 macOS
               </button>
-              <button
-                type="button"
-                className={system === "windows" ? "on" : ""}
-                onClick={() => setSystem("windows")}
-              >
+              <button type="button" className={system === "windows" ? "on" : ""} onClick={() => setSystem("windows")}>
                 Windows
               </button>
             </div>
           </div>
           <p className="lede tight">
-            Save this file at the path on the card. It is the whole hook: the command inside it reads the editor
-            event and posts it. Python 3 has to be on PATH. Nothing else is installed.
+            {selected
+              ? `The download uses the selected ${keyKind} key. Save the file at the path, then restart the editor.`
+              : `Create a ${keyKind} key above, then download it. Save the file at the path and restart the editor.`}
           </p>
           {meta?.api_url && (
             <p className="endpoint">
@@ -726,8 +842,36 @@ function Console({ token, user, onSignOut }) {
               );
             })}
           </div>
+          <div className="mcp">
+            <div className="section-head row">
+              <div>
+                <h3>MCP for {workspaceLabel}</h3>
+                <p className="lede tight">
+                  Same host, path <code>/mcp</code>, same {keyKind} key. The secret is filled in after you create a
+                  key on this page. Older keys stay hidden, so create a new one when you need the value again.
+                </p>
+              </div>
+              <button type="button" onClick={() => copyText(snippet, "MCP config copied.")}>
+                Copy config
+              </button>
+            </div>
+            <pre>{snippet}</pre>
+          </div>
         </section>
-      </div>
+
+        <section className="band split" id="contact">
+          <div>
+            <p className="eyebrow">Contact</p>
+            <h2>When a step fails.</h2>
+            <p className="lede tight">
+              Include the editor, macOS or Windows, whether the key was personal or a team, and the message you saw.
+            </p>
+          </div>
+          <p className="contact-mail">
+            <a href={contactHref("Memplug issue")}>{SUPPORT_EMAIL}</a>
+          </p>
+        </section>
+      </main>
     </div>
   );
 }
