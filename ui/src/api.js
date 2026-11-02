@@ -54,8 +54,24 @@ export function listKeys(token) {
   return request("/v1/keys", { token });
 }
 
-export function createKey(token, name) {
-  return request("/v1/keys", { method: "POST", token, body: { name } });
+export function createKey(token, name, teamId) {
+  return request("/v1/keys", { method: "POST", token, body: { name, team_id: teamId || null } });
+}
+
+export function listTeams(token) {
+  return request("/v1/teams", { token });
+}
+
+export function createTeam(token, name) {
+  return request("/v1/teams", { method: "POST", token, body: { name } });
+}
+
+export function joinTeam(token, code) {
+  return request("/v1/teams/join", { method: "POST", token, body: { code } });
+}
+
+export function leaveTeam(token, id) {
+  return request(`/v1/teams/${id}/members/me`, { method: "DELETE", token });
 }
 
 export function revokeKey(token, id) {

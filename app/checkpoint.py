@@ -61,7 +61,16 @@ def consider(key: dict) -> None:
     col = database()["conversations"]
     doc = col.find_one(
         key,
-        {"messages": 1, "processed_messages": 1, "user_id": 1, "project": 1, "last_memory_at": 1, "updated_at": 1},
+        {
+            "messages": 1,
+            "processed_messages": 1,
+            "user_id": 1,
+            "project": 1,
+            "workspace_type": 1,
+            "workspace_id": 1,
+            "last_memory_at": 1,
+            "updated_at": 1,
+        },
     )
     if not doc:
         return
@@ -91,13 +100,31 @@ def consider(key: dict) -> None:
         return
     threading.Thread(
         target=_run,
-        args=(dict(key), start, batch, user_id, str(doc.get("project") or ""), reason),
+        args=(
+            dict(key),
+            start,
+            batch,
+            user_id,
+            str(doc.get("project") or ""),
+            reason,
+            str(doc.get("workspace_type") or "user"),
+            str(doc.get("workspace_id") or user_id),
+        ),
         daemon=True,
         name="memory-checkpoint",
     ).start()
 
 
-def _run(key: dict, start: int, batch: list[dict], user_id: str, project: str, reason: str) -> None:
+def _run(
+    key: dict,
+    start: int,
+    batch: list[dict],
+    user_id: str,
+    project: str,
+    reason: str,
+    workspace_type: str = "user",
+    workspace_id: str = "",
+) -> None:
     from app.extract import extract_memories
     from app.memories import save_memories
 
@@ -112,7 +139,13 @@ def _run(key: dict, start: int, batch: list[dict], user_id: str, project: str, r
         )
         memories = extract_memories(batch)
         saved = save_memories(
-            user_id, str(key.get("source") or ""), str(key.get("session_id") or ""), project, memories
+            user_id,
+            str(key.get("source") or ""),
+            str(key.get("session_id") or ""),
+            project,
+            memories,
+            owner_type=workspace_type if workspace_type == "team" else "user",
+            owner_id=workspace_id or user_id,
         )
         log.info("checkpoint done session=%s memories=%s", key.get("session_id"), saved)
         col.update_one(

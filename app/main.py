@@ -34,13 +34,17 @@ from app.store import ensure_store_indexes, save_message, stats
 from app.users import (
     authenticate,
     create_api_key,
+    create_team,
     create_user,
     ensure_indexes,
     get_user,
+    join_team,
+    leave_team,
     list_api_keys,
+    list_teams,
     reveal_api_key,
     revoke_api_key,
-    user_id_for_api_key,
+    workspace_for_api_key,
 )
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -145,6 +149,15 @@ class LoginIn(BaseModel):
 
 class KeyIn(BaseModel):
     name: str = Field(default="default", max_length=40)
+    team_id: str | None = None
+
+
+class TeamIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class JoinIn(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
 
 
 class UserOut(BaseModel):
@@ -184,10 +197,10 @@ def require_api_key(authorization: str | None = Header(default=None)) -> dict:
     expected = api_key()
     if expected and len(token) == len(expected) and hmac.compare_digest(token, expected):
         return {"user_id": None}
-    user_id = user_id_for_api_key(token)
-    if not user_id:
+    space = workspace_for_api_key(token)
+    if not space:
         raise HTTPException(status_code=401, detail="Invalid API key")
-    return {"user_id": user_id}
+    return space
 
 
 def require_user(authorization: str | None = Header(default=None)) -> dict:
@@ -241,11 +254,44 @@ def keys(user: dict = Depends(require_user)) -> dict:
 @app.post("/v1/keys")
 def make_key(body: KeyIn, user: dict = Depends(require_user)) -> dict:
     name = body.name.strip() or "default"
+    team_id = body.team_id.strip() if isinstance(body.team_id, str) else ""
     try:
-        created = create_api_key(user["id"], name)
+        created = create_api_key(user["id"], name, team_id or None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return created
+
+
+@app.get("/v1/teams")
+def teams(user: dict = Depends(require_user)) -> dict:
+    return {"teams": list_teams(user["id"])}
+
+
+@app.post("/v1/teams")
+def make_team(body: TeamIn, user: dict = Depends(require_user)) -> dict:
+    try:
+        return create_team(user["id"], body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/teams/join")
+def join(body: JoinIn, user: dict = Depends(require_user)) -> dict:
+    try:
+        return join_team(user["id"], body.code)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/v1/teams/{team_id}/members/me")
+def leave(team_id: str, user: dict = Depends(require_user)) -> dict:
+    try:
+        left = leave_team(user["id"], team_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not left:
+        raise HTTPException(status_code=404, detail="You are not on that team")
+    return {"left": True}
 
 
 @app.delete("/v1/keys/{key_id}")
@@ -301,6 +347,8 @@ def capture_message(body: MessageIn, auth: dict = Depends(require_api_key)) -> d
         content=body.content,
         timestamp=body.timestamp,
         user_id=auth.get("user_id"),
+        workspace_type=auth.get("workspace_type") or "user",
+        workspace_id=auth.get("workspace_id") or auth.get("user_id") or "",
     )
     return {"saved": saved}
 

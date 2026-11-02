@@ -30,12 +30,21 @@ class ApiKeyVerifier:
     """Map a Memplug API key to the user who owns it. The shared capture key is rejected."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        from app.users import user_id_for_api_key
+        from app.users import workspace_for_api_key
 
-        user_id = await asyncio.to_thread(user_id_for_api_key, token.strip())
-        if not user_id:
+        space = await asyncio.to_thread(workspace_for_api_key, token.strip())
+        if not space:
             return None
-        return AccessToken(token=token, client_id=user_id, scopes=[], subject=user_id)
+        return AccessToken(
+            token=token,
+            client_id=space["user_id"],
+            scopes=[],
+            subject=space["user_id"],
+            claims={
+                "workspace_type": space["workspace_type"],
+                "workspace_id": space["workspace_id"],
+            },
+        )
 
 
 def _resource_url() -> str:
@@ -113,6 +122,9 @@ def search_memory(
     to see. The server intersects the list with the grant. sub_domain narrows
     to one grouping inside those domains.
 
+    The API key chooses the workspace. A personal key reads only that user.
+    A team key reads only that team.
+
     Returns memory id, content, domain, sub_domain, confidence, updated_at,
     and sources. Nothing outside the grant is returned.
     """
@@ -139,6 +151,9 @@ def get_user_context(task: str, domains: list[str] | None = None) -> dict:
     domains is a metadata filter only. Pass a list of one domain, several
     domains, or null. Null means no domain filter. The server still intersects
     the list with the grant.
+
+    The API key chooses the workspace. A personal key loads that user's
+    memories. A team key loads only that team's memories.
     """
     store = _store()
     if isinstance(store, dict):
@@ -151,10 +166,10 @@ def get_user_context(task: str, domains: list[str] | None = None) -> dict:
 
 @mcp.tool()
 def list_domains() -> dict:
-    """List domains this user already has memories in, with descriptions.
+    """List domains that already have memories in this key's workspace.
 
-    A domain with no memories for this user is omitted. This tool takes no
-    arguments. save_memory can still use any granted catalogue domain.
+    A personal key lists that user's domains. A team key lists only that
+    team's domains. A domain with no memories there is omitted.
     """
     store = _store()
     if isinstance(store, dict):
@@ -183,6 +198,18 @@ def _request_user_id() -> str:
     return _stdio_user
 
 
+def _request_workspace() -> tuple[str, str]:
+    token = get_access_token()
+    if token is not None and token.subject:
+        claims = token.claims or {}
+        kind = claims.get("workspace_type") or "user"
+        owner = str(claims.get("workspace_id") or token.subject)
+        if kind == "team" and owner:
+            return ("team", owner)
+        return ("user", token.subject)
+    return ("user", _stdio_user)
+
+
 def _store() -> MemoryStore | dict:
     user_id = _request_user_id()
     if not user_id:
@@ -190,7 +217,9 @@ def _store() -> MemoryStore | dict:
     url = database_url()
     if not url:
         return {"status": "retryable_error", "reason": "DATABASE_URL is not set"}
-    return _database().for_user(user_id)
+    store = _database().for_user(user_id)
+    store.owner_type, store.owner_id = _request_workspace()
+    return store
 
 
 def _database() -> MemoryStore:

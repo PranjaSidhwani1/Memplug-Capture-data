@@ -42,16 +42,12 @@ def accepted_memories(payload: dict) -> list[dict]:
             continue
         if confidence < _MIN_CONFIDENCE:
             continue
-        entities = _entities(row.get("entities"), entity)
         memory_type = str(row.get("memory_type") or "").strip().lower()
         accepted.append(
             {
-                "entity": entity,
-                "entities": entities,
                 "content": content,
                 "domain": resolve_domain(str(row.get("domain") or "")),
                 "memory_type": memory_type if memory_type in _TYPES else "fact",
-                "confidence": round(min(confidence, 1.0), 3),
             }
         )
     return accepted
@@ -132,25 +128,6 @@ def _json_object(content: str) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("model output was not a JSON object")
     return parsed
-
-
-def _entities(value: object, entity: str) -> list[str]:
-    names = [entity]
-    if isinstance(value, list):
-        for item in value:
-            if isinstance(item, str) and item.strip():
-                names.append(item.strip()[:160])
-    unique: list[str] = []
-    seen: set[str] = set()
-    for name in names:
-        key = name.casefold()
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(name)
-        if len(unique) == 8:
-            break
-    return unique
 
 
 def _clip(value: object, limit: int) -> str:

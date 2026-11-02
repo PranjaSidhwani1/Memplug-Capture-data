@@ -45,6 +45,7 @@ def _ensure_conversation_index(col) -> None:
         unique=True,
         name="user_source_session",
     )
+    col.create_index([("workspace_type", 1), ("workspace_id", 1)], name="workspace")
 
 
 def ensure_store_indexes() -> None:
@@ -68,6 +69,8 @@ def save_message(
     content: str,
     timestamp: str | None = None,
     user_id: str | None = None,
+    workspace_type: str = "user",
+    workspace_id: str = "",
 ) -> bool:
     text = content.strip()
     if not text or role not in {"user", "assistant"}:
@@ -77,6 +80,10 @@ def save_message(
     if user_id:
         key["user_id"] = user_id
     message = {"role": role, "content": text, "timestamp": timestamp or _now()}
+    kind = workspace_type if workspace_type in {"user", "team"} else "user"
+    owner = workspace_id or user_id or ""
+    if kind == "user":
+        owner = user_id or owner
     existing = col.find_one(key, {"messages": 1})
     if existing:
         for saved in existing.get("messages") or []:
@@ -91,7 +98,15 @@ def save_message(
                 return False
         col.update_one(
             key,
-            {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
+            {
+                "$set": {
+                    "project": project,
+                    "workspace_type": kind,
+                    "workspace_id": owner,
+                    "updated_at": _now(),
+                },
+                "$push": {"messages": message},
+            },
         )
     else:
         try:
@@ -99,6 +114,8 @@ def save_message(
                 {
                     **key,
                     "project": project,
+                    "workspace_type": kind,
+                    "workspace_id": owner,
                     "created_at": _now(),
                     "updated_at": _now(),
                     "messages": [message],
@@ -107,7 +124,15 @@ def save_message(
         except DuplicateKeyError:
             col.update_one(
                 key,
-                {"$set": {"project": project, "updated_at": _now()}, "$push": {"messages": message}},
+                {
+                    "$set": {
+                        "project": project,
+                    "workspace_type": kind,
+                    "workspace_id": owner,
+                        "updated_at": _now(),
+                    },
+                    "$push": {"messages": message},
+                },
             )
     log.info(
         "mongo saved source=%s session=%s user=%s project=%s role=%s content=%s",

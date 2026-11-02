@@ -324,6 +324,42 @@ h2 {
   font-size: 32px;
 }
 
+.spaces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 18px;
+}
+
+.spaces button,
+.mint button {
+  border: 1px solid var(--line-strong);
+  color: var(--silver);
+  padding: 8px 12px;
+  background: transparent;
+}
+
+.spaces button.on {
+  border-color: var(--red);
+  color: var(--ink);
+}
+
+.team-note {
+  margin: 0 0 22px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+}
+
+.team-note p {
+  margin: 0 0 8px;
+  color: var(--silver);
+}
+
+.team-note code {
+  color: var(--ink);
+  letter-spacing: 0.12em;
+}
+
 .mint {
   grid-template-columns: 1fr auto;
   align-items: end;
@@ -486,6 +522,136 @@ h2 {
   margin-top: 8px;
 }
 
+.primary.slim,
+.who .primary {
+  margin-top: 0;
+  padding: 10px 14px;
+  background: var(--red);
+  color: white;
+  border: 0;
+}
+
+.back {
+  align-self: flex-start;
+  margin-bottom: 28px;
+  background: transparent;
+  border: 0;
+  color: var(--dim);
+  padding: 0;
+}
+
+.product main {
+  padding: 0 28px 72px;
+}
+
+.hero {
+  padding: 72px 0 36px;
+  max-width: 920px;
+}
+
+.hero h1 {
+  max-width: 16ch;
+  margin-bottom: 18px;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-top: 28px;
+}
+
+.hero-actions a {
+  color: var(--silver);
+}
+
+.band {
+  padding: 42px 0;
+  border-top: 1px solid var(--line);
+}
+
+.band h2 {
+  max-width: 18ch;
+}
+
+.offer,
+.steps {
+  display: grid;
+  gap: 14px;
+}
+
+.offer {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.offer article,
+.steps li {
+  border: 1px solid var(--line);
+  background: rgba(16, 18, 22, 0.72);
+  padding: 18px;
+}
+
+.offer span,
+.steps span {
+  display: block;
+  color: var(--red);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  margin-bottom: 12px;
+}
+
+.offer h3,
+.steps h3 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.offer p,
+.steps p,
+.benefits {
+  color: var(--silver);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+  gap: 36px;
+  align-items: start;
+}
+
+.benefits {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.benefits li {
+  border-left: 2px solid var(--red);
+  padding: 8px 0 8px 14px;
+}
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 28px;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.steps span {
+  margin: 4px 0 0;
+}
+
 @media (max-width: 960px) {
   .gate,
   .workspace {
@@ -529,5 +695,24 @@ h2 {
 
   .mint {
     grid-template-columns: 1fr;
+  }
+
+  .product main {
+    padding: 0 20px 56px;
+  }
+
+  .hero {
+    padding-top: 40px;
+  }
+
+  .offer,
+  .split,
+  .steps li {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

@@ -24,6 +24,8 @@ def save_memories(
     session_id: str,
     project: str,
     memories: list[dict],
+    owner_type: str = "user",
+    owner_id: str = "",
 ) -> int:
     if not memories:
         return 0
@@ -35,17 +37,17 @@ def save_memories(
     with _connect() as conn:
         _ensure_schema(conn)
         for item, vector in zip(memories, vectors, strict=True):
-            memory_id = _upsert_memory(conn, user_id, source, session_id, project, item)
+            memory_id = _upsert_memory(
+                conn, user_id, source, session_id, project, item, owner_type, owner_id or user_id
+            )
             log.info(
-                "postgres saved id=%s user=%s source=%s session=%s domain=%s entity=%s type=%s confidence=%s content=%s embedding_dim=%s",
+                "postgres saved id=%s user=%s source=%s session=%s domain=%s type=%s content=%s embedding_dim=%s",
                 memory_id,
                 user_id,
                 source,
                 session_id,
                 item["domain"],
-                item["entity"],
                 item["memory_type"],
-                item["confidence"],
                 item["content"],
                 len(vector),
             )
@@ -62,35 +64,42 @@ def save_memories(
     return saved
 
 
-def _upsert_memory(conn, user_id: str, source: str, session_id: str, project: str, item: dict):
-    from psycopg.types.json import Jsonb
-
+def _upsert_memory(
+    conn,
+    user_id: str,
+    source: str,
+    session_id: str,
+    project: str,
+    item: dict,
+    owner_type: str = "user",
+    owner_id: str = "",
+):
     norm = " ".join(item["content"].casefold().split())
     row = conn.execute(
         """
         INSERT INTO memories (
-            id, user_id, domain, entity, entities, content, content_norm,
-            memory_type, confidence, source, session_id, project
+            id, user_id, owner_type, owner_id, domain, content, content_norm,
+            memory_type, source, session_id, project
         )
-        VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (user_id, content_norm) DO UPDATE
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (owner_type, owner_id, content_norm) DO UPDATE
         SET domain = EXCLUDED.domain,
-            entity = EXCLUDED.entity,
-            entities = EXCLUDED.entities,
-            confidence = EXCLUDED.confidence,
+            memory_type = EXCLUDED.memory_type,
+            source = EXCLUDED.source,
+            session_id = EXCLUDED.session_id,
+            project = EXCLUDED.project,
             updated_at = now()
         RETURNING id
         """,
         (
             uuid.uuid4(),
             user_id,
+            owner_type if owner_type == "team" else "user",
+            owner_id or user_id,
             item["domain"],
-            item["entity"],
-            Jsonb(item["entities"]),
             item["content"],
             norm,
             item["memory_type"],
-            item["confidence"],
             source,
             session_id,
             project,
@@ -131,35 +140,35 @@ def _ensure_schema(conn) -> None:
             CREATE TABLE IF NOT EXISTS memories (
                 id UUID PRIMARY KEY,
                 user_id TEXT NOT NULL,
+                owner_type TEXT NOT NULL DEFAULT 'user',
+                owner_id TEXT NOT NULL,
                 domain TEXT NOT NULL,
-                entity TEXT NOT NULL,
-                entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+                sub_domain TEXT,
                 content TEXT NOT NULL,
                 content_norm TEXT NOT NULL,
                 memory_type TEXT NOT NULL,
-                confidence REAL,
-                source TEXT NOT NULL,
-                session_id TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
                 project TEXT NOT NULL DEFAULT '',
+                source_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                UNIQUE (user_id, content_norm)
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
         conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_domain TEXT")
-        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS sub_domain_norm TEXT")
         conn.execute(
             "ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_event_ids JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
-        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'")
-        conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS superseded_by UUID")
         conn.execute(
             "ALTER TABLE memories ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
         )
+        _drop_retired_columns(conn)
+        _ensure_owner(conn)
         conn.execute(
             """
-            CREATE INDEX IF NOT EXISTS memories_user_domain_idx
-            ON memories (user_id, domain)
+            CREATE INDEX IF NOT EXISTS memories_owner_domain_idx
+            ON memories (owner_type, owner_id, domain)
             """
         )
         conn.execute(
@@ -172,6 +181,39 @@ def _ensure_schema(conn) -> None:
         )
         conn.commit()
         _schema_ready = True
+
+
+def _drop_retired_columns(conn) -> None:
+    """Remove columns the product no longer stores. Safe on every boot."""
+    has_status = conn.execute(
+        """
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'memories' AND column_name = 'status'
+        """
+    ).fetchone()
+    if has_status:
+        conn.execute("DELETE FROM memories WHERE status = 'superseded'")
+    for column in ("entities", "entity", "confidence", "sub_domain_norm", "status", "superseded_by"):
+        conn.execute(f"ALTER TABLE memories DROP COLUMN IF EXISTS {column}")
+
+
+def _ensure_owner(conn) -> None:
+    """A memory belongs to one user or one team. Existing rows become personal."""
+    conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS owner_type TEXT")
+    conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS owner_id TEXT")
+    conn.execute("UPDATE memories SET owner_type = 'user' WHERE owner_type IS NULL")
+    conn.execute("UPDATE memories SET owner_id = user_id WHERE owner_id IS NULL")
+    conn.execute("ALTER TABLE memories ALTER COLUMN owner_type SET DEFAULT 'user'")
+    conn.execute("ALTER TABLE memories ALTER COLUMN owner_type SET NOT NULL")
+    conn.execute("ALTER TABLE memories ALTER COLUMN owner_id SET NOT NULL")
+    conn.execute("ALTER TABLE memories DROP CONSTRAINT IF EXISTS memories_user_id_content_norm_key")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS memories_owner_content_idx
+        ON memories (owner_type, owner_id, content_norm)
+        """
+    )
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
