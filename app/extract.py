@@ -63,7 +63,12 @@ def _prompt(messages: list[dict]) -> str:
     transcript = "\n\n".join(lines)
     return (
         "Extract durable memories from this conversation window.\n"
-        "A memory is one sentence about one entity: a person, project, tool, place, or preference.\n"
+        "Each memory is about one subject: a person, project, tool, place, preference, decision, or plan.\n"
+        "Write the content so it can stand alone later, in the user's terms.\n"
+        "A simple fact stays one sentence.\n"
+        "When the subject has a reason, a constraint, an exception, or related details, "
+        "write two to four sentences and keep those details in that same memory.\n"
+        "Do not pad a simple fact. Do not split one subject into several one-line memories.\n"
         "Use a fact the user stated, or a decision they accepted. "
         "Do not store the assistant's guesses, questions, or hypotheticals as user facts.\n"
         "Assign exactly one domain from this catalogue:\n"
@@ -71,6 +76,7 @@ def _prompt(messages: list[dict]) -> str:
         "Return JSON only, in this shape:\n"
         '{"memories":[{"entity":"","entities":[""],"content":"","domain":"",'
         '"memory_type":"fact|preference|decision|plan","confidence":0.0}]}\n'
+        "content is one sentence, or a short paragraph when the subject needs the extra detail. "
         "confidence is 0 to 1. If nothing should be kept, return {\"memories\":[]}.\n\n"
         f"Conversation:\n{transcript}"
     )

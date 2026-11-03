@@ -1,7 +1,8 @@
 """Memories in the same Neon database the capture service writes.
 
-Search is hybrid: keyword rank and pgvector cosine similarity, inside the
-domains this process is allowed to see.
+Search is hybrid: keyword rank and pgvector cosine similarity, fused with
+reciprocal rank fusion, inside the domains this process is allowed to see.
+The model never chooses how many memories come back.
 """
 
 from __future__ import annotations
@@ -19,8 +20,10 @@ from memory_mcp.embed import embed
 log = logging.getLogger("memplug.mcp")
 
 _MAX_CONTENT = 8_000
-_MAX_LIMIT = 50
-_DEFAULT_LIMIT = 10
+_CONTEXT_LIMIT = 10
+_SEARCH_LIMIT = 5
+_RRF_K = 60
+_RRF_POOL = 30
 _SUPERSEDE_SIMILARITY = 0.92
 _TYPES = {"fact", "preference", "decision", "plan"}
 
@@ -108,40 +111,89 @@ class MemoryStore:
             saved["reason"] = reason
         return saved
 
-    def search(
+    def user_context(self, task: str, domains: list[str] | None = None) -> str:
+        """Memories for the first message of a new chat. Always ten results."""
+        return self._retrieve(task, domains, None, None, _CONTEXT_LIMIT)
+
+    def search_memories(
         self,
         query: str,
         domains: list[str] | None = None,
         sub_domain: str | None = None,
         memory_type: str | None = None,
-        limit: int | None = None,
-    ) -> dict:
+    ) -> str:
+        """Narrower lookup later in a chat. Always five results."""
+        return self._retrieve(query, domains, sub_domain, memory_type, _SEARCH_LIMIT)
+
+    def _retrieve(
+        self,
+        query: str,
+        domains: list[str] | None,
+        sub_domain: str | None,
+        memory_type: str | None,
+        limit: int,
+    ) -> str:
         text = query.strip() if isinstance(query, str) else ""
         if not text:
-            return {"status": "rejected", "reason": "query is required", "query": "", "memories": []}
+            return "A query is required."
 
         selected = self._filter_domains(domains)
-        cap = _DEFAULT_LIMIT if limit is None else max(1, min(int(limit), _MAX_LIMIT))
         if not selected:
-            return {"query": text, "memories": []}
+            return ""
 
         sub = sub_domain.strip() if isinstance(sub_domain, str) else ""
         kind = memory_type.strip().lower() if isinstance(memory_type, str) else ""
         owner = self._workspace()
         if isinstance(owner, dict):
-            owner["query"] = text
-            owner["memories"] = []
-            return owner
+            return str(owner.get("reason") or "memory search failed")
         try:
             vector = embed([text])[0]
             with self._connect() as conn:
-                rows = self._search_rows(conn, text, vector, selected, sub, kind, cap, owner)
+                scope, extra = _scope_sql(sub, kind)
+                scope_params: list[object] = [owner[0], owner[1], selected, *extra]
+                vector_rows = conn.execute(
+                    f"""
+                    SELECT m.id::text, m.content
+                    FROM memories m
+                    JOIN memory_vectors v ON v.memory_id = m.id
+                    WHERE {scope}
+                    ORDER BY v.embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (*scope_params, vector, _RRF_POOL),
+                ).fetchall()
+                lexical_rows = conn.execute(
+                    f"""
+                    WITH q AS (
+                        SELECT CASE
+                            WHEN to_tsvector('english', %s) = ''::tsvector THEN NULL
+                            ELSE to_tsquery(
+                                'english',
+                                array_to_string(
+                                    tsvector_to_array(to_tsvector('english', %s)),
+                                    ' | '
+                                )
+                            )
+                        END AS tsq
+                    )
+                    SELECT m.id::text, m.content
+                    FROM memories m
+                    CROSS JOIN q
+                    WHERE {scope}
+                      AND q.tsq IS NOT NULL
+                      AND to_tsvector('english', m.content) @@ q.tsq
+                    ORDER BY ts_rank_cd(to_tsvector('english', m.content), q.tsq) DESC
+                    LIMIT %s
+                    """,
+                    (text, text, *scope_params, _RRF_POOL),
+                ).fetchall()
         except Exception:
             log.exception("search_memory failed")
-            return {"status": "retryable_error", "reason": "search failed", "query": text, "memories": []}
+            return "Memory search failed."
 
-        log.info("mcp search query=%s hits=%s", text, len(rows))
-        return {"query": text, "memories": rows}
+        texts = _fuse(vector_rows, lexical_rows, limit)
+        log.info("mcp search query=%s hits=%s", text, len(texts))
+        return "\n".join(texts)
 
     def list_domains(self) -> dict:
         from memory_mcp.domains import catalogue
@@ -274,6 +326,12 @@ class MemoryStore:
             """
             CREATE INDEX IF NOT EXISTS memories_owner_domain_idx
             ON memories (owner_type, owner_id, domain)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS memories_content_fts_idx
+            ON memories USING GIN (to_tsvector('english', content))
             """
         )
 
@@ -419,66 +477,6 @@ class MemoryStore:
             return ("team", self.owner_id)
         return ("user", self.user_id)
 
-    def _search_rows(
-        self,
-        conn,
-        query: str,
-        vector: list[float],
-        domains: list[str],
-        sub: str,
-        kind: str,
-        limit: int,
-        owner: tuple[str, str],
-    ):
-        sql = """
-            SELECT
-                m.id::text,
-                m.content,
-                m.domain,
-                m.sub_domain,
-                m.updated_at,
-                m.source_event_ids,
-                (
-                    0.5 * CASE WHEN v.embedding IS NULL THEN 0 ELSE 1 - (v.embedding <=> %s::vector) END
-                    + 0.5 * LEAST(
-                        ts_rank_cd(to_tsvector('english', m.content), plainto_tsquery('english', %s)),
-                        1
-                    )
-                ) AS score
-            FROM memories m
-            LEFT JOIN memory_vectors v ON v.memory_id = m.id
-            WHERE m.owner_type = %s
-              AND m.owner_id = %s
-              AND m.domain = ANY(%s)
-        """
-        params: list[object] = [vector, query, owner[0], owner[1], domains]
-        if sub:
-            sql += " AND lower(regexp_replace(coalesce(m.sub_domain, ''), '\\s+', ' ', 'g')) = %s"
-            params.append(_norm(sub))
-        if kind:
-            sql += " AND m.memory_type = %s"
-            params.append(kind)
-        sql += " ORDER BY score DESC LIMIT %s"
-        params.append(limit)
-        memories = []
-        for row in conn.execute(sql, params).fetchall():
-            sources = row[5] if isinstance(row[5], list) else []
-            updated = row[4]
-            memories.append(
-                {
-                    "id": row[0],
-                    "content": row[1],
-                    "domain": row[2],
-                    "sub_domain": row[3],
-                    "owner_type": owner[0],
-                    "owner_id": owner[1],
-                    "confidence": round(float(row[6]), 3),
-                    "updated_at": updated.isoformat().replace("+00:00", "Z") if updated is not None else "",
-                    "sources": sources,
-                }
-            )
-        return memories
-
     def _filter_domains(self, domains: list[str] | None) -> list[str]:
         if not domains:
             return sorted(self.granted_domains)
@@ -490,6 +488,45 @@ class MemoryStore:
             if resolved is not None and resolved in self.granted_domains and resolved not in selected:
                 selected.append(resolved)
         return selected
+
+
+def _scope_sql(sub: str, kind: str) -> tuple[str, list[object]]:
+    sql = """
+        m.owner_type = %s
+        AND m.owner_id = %s
+        AND m.domain = ANY(%s)
+    """
+    params: list[object] = []
+    if sub:
+        sql += " AND lower(regexp_replace(coalesce(m.sub_domain, ''), '\\s+', ' ', 'g')) = %s"
+        params.append(_norm(sub))
+    if kind:
+        sql += " AND m.memory_type = %s"
+        params.append(kind)
+    return sql, params
+
+
+def _fuse(vector_rows, lexical_rows, limit: int) -> list[str]:
+    """Reciprocal rank fusion. A memory in both lists outranks one list alone."""
+    scores: dict[str, float] = {}
+    content: dict[str, str] = {}
+    order: list[str] = []
+    for rows in (vector_rows, lexical_rows):
+        for rank, row in enumerate(rows, start=1):
+            memory_id = str(row[0])
+            scores[memory_id] = scores.get(memory_id, 0.0) + (1.0 / (_RRF_K + rank))
+            content[memory_id] = row[1] if isinstance(row[1], str) else ""
+            if memory_id not in order:
+                order.append(memory_id)
+    ranked = sorted(order, key=lambda memory_id: (-scores[memory_id], order.index(memory_id)))
+    texts: list[str] = []
+    for memory_id in ranked:
+        piece = " ".join(content[memory_id].split())
+        if piece:
+            texts.append(piece)
+        if len(texts) >= limit:
+            break
+    return texts
 
 
 def _clean_list(values: list[str] | None, *, limit: int, item_length: int) -> list[str]:

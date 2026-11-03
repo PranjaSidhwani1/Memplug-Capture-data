@@ -64,8 +64,9 @@ mcp = MCPServer(
         "A domain is one vector database collection. "
         "A sub-domain is an optional grouping inside a single domain. "
         "Never send a user id, tenant id, or permission scope. "
-        "Call get_user_context at the start of a task. "
-        "Call search_memory for a narrower lookup. "
+        "On the first message of a new chat, call get_user_context and pass that message as the task. "
+        "Call search_memory later only when you need a narrower lookup. "
+        "Both tools return concatenated memory text. The result count is fixed on the server. "
         "Call save_memory only when the user asks you to remember a specific fact. "
         "Call list_domains to see the domains this user already has memories in. "
         "Call list_sub_domains with a domain to see the groupings inside it. "
@@ -88,6 +89,11 @@ def save_memory(
     for a checkpoint. A correction in chat also uses this tool. An exact
     duplicate is stored once. A very similar fact in the same domain replaces
     the older one.
+
+    Write content that can stand alone later. A simple fact is one sentence.
+    When it has a reason, a constraint, an exception, or related details,
+    write two to four sentences and keep those details together. Do not pad
+    a simple fact into a paragraph.
 
     domain is a suggestion only. The server resolves it to the catalogue and
     rejects a domain this application is not granted. sub_domain is an optional
@@ -113,9 +119,8 @@ def search_memory(
     domains: list[str] | None = None,
     sub_domain: str | None = None,
     memory_type: str | None = None,
-    limit: int | None = None,
-) -> dict:
-    """Search memories when you need specific facts.
+) -> str:
+    """Search memories when you need specific facts later in the chat.
 
     domains is a metadata filter only. Pass a list of one domain, several
     domains, or null. Null searches every domain this application is allowed
@@ -125,28 +130,29 @@ def search_memory(
     The API key chooses the workspace. A personal key reads only that user.
     A team key reads only that team.
 
-    Returns memory id, content, domain, sub_domain, confidence, updated_at,
-    and sources. Nothing outside the grant is returned.
+    Returns the matching memory text, concatenated. An empty result means
+    nothing matched. Nothing outside the grant is returned.
     """
     store = _store()
     if isinstance(store, dict):
-        return store
-    return store.search(
+        return str(store.get("reason") or "memory search failed")
+    return store.search_memories(
         query=query,
         domains=domains,
         sub_domain=sub_domain,
         memory_type=memory_type,
-        limit=limit,
     )
 
 
 @mcp.tool()
-def get_user_context(task: str, domains: list[str] | None = None) -> dict:
-    """Load a compact memory bundle for the current task.
+def get_user_context(task: str, domains: list[str] | None = None) -> str:
+    """Load memories relevant to the first message of a new chat.
 
-    Call this at the start of a task, for example "plan a Japan trip".
-    Use search_memory for a narrower lookup. Returns the same memory shape
-    as search_memory.
+    Call this once at the start of a new chat. Pass the user's first message
+    as task. Use search_memory later for a narrower lookup.
+
+    Returns the matching memory text, concatenated. An empty result means
+    nothing matched. It is not a list of records.
 
     domains is a metadata filter only. Pass a list of one domain, several
     domains, or null. Null means no domain filter. The server still intersects
@@ -157,11 +163,8 @@ def get_user_context(task: str, domains: list[str] | None = None) -> dict:
     """
     store = _store()
     if isinstance(store, dict):
-        return store
-    result = store.search(query=task, domains=domains)
-    if "query" in result:
-        result["query"] = task.strip() if isinstance(task, str) else ""
-    return result
+        return str(store.get("reason") or "memory search failed")
+    return store.user_context(task, domains)
 
 
 @mcp.tool()

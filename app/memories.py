@@ -172,6 +172,12 @@ def _ensure_schema(conn) -> None:
             """
         )
         conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS memories_content_fts_idx
+            ON memories USING GIN (to_tsvector('english', content))
+            """
+        )
+        conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS memory_vectors (
                 memory_id UUID PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
