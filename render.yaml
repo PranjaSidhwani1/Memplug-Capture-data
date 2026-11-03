@@ -14,6 +14,16 @@ services:
         sync: false
       - key: MEMPLUG_PUBLIC_API_URL
         sync: false
+      - key: MAIL_FROM
+        value: "Memplug <memplug@support.com>"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
       - key: MONGODB_URI
         sync: false
       - key: META_API_KEY

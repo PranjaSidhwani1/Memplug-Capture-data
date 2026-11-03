@@ -46,6 +46,18 @@ export function login(email, password) {
   return request("/v1/auth/login", { method: "POST", body: { email, password } });
 }
 
+export function verifyOtp(email, code) {
+  return request("/v1/auth/otp", { method: "POST", body: { email, code } });
+}
+
+export function requestReset(email) {
+  return request("/v1/auth/forgot", { method: "POST", body: { email } });
+}
+
+export function resetPassword(email, code, password) {
+  return request("/v1/auth/reset", { method: "POST", body: { email, code, password } });
+}
+
 export function me(token) {
   return request("/v1/auth/me", { token });
 }

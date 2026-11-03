@@ -10,10 +10,13 @@ import {
   listTeams,
   login,
   me,
+  requestReset,
+  resetPassword,
   revokeKey,
   signup,
   storedToken,
   storeToken,
+  verifyOtp,
 } from "./api.js";
 
 const SUPPORT_EMAIL = "pranjaysidhwani@gmail.com";
@@ -288,21 +291,59 @@ function ProductPage({ onSession }) {
 
 function AuthScreen({ mode: initialMode, onMode, onBack, onSession }) {
   const [mode, setMode] = useState(initialMode || "login");
+  const [step, setStep] = useState("credentials");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+
+  function switchMode(next) {
+    setMode(next);
+    onMode(next);
+    setStep("credentials");
+    setCode("");
+    setError("");
+    setNotice("");
+  }
 
   async function submit(event) {
     event.preventDefault();
     setError("");
     setBusy(true);
     try {
-      const payload =
-        mode === "signup"
-          ? await signup(email, password, name)
-          : await login(email, password);
+      if (step === "otp") {
+        const payload = await verifyOtp(email, code);
+        onSession(payload.token, payload.user);
+        return;
+      }
+      if (step === "forgot") {
+        await requestReset(email);
+        setStep("reset");
+        setCode("");
+        setPassword("");
+        setNotice("If that account exists, we sent a reset code.");
+        return;
+      }
+      if (step === "reset") {
+        const payload = await resetPassword(email, code, password);
+        onSession(payload.token, payload.user);
+        return;
+      }
+      if (mode === "signup") {
+        const payload = await signup(email, password, name);
+        onSession(payload.token, payload.user);
+        return;
+      }
+      const payload = await login(email, password);
+      if (payload.otp_required) {
+        setStep("otp");
+        setCode("");
+        setNotice(`We sent a 6-digit code to ${email}.`);
+        return;
+      }
       onSession(payload.token, payload.user);
     } catch (err) {
       setError(err.message);
@@ -310,6 +351,9 @@ function AuthScreen({ mode: initialMode, onMode, onBack, onSession }) {
       setBusy(false);
     }
   }
+
+  const showPassword = step === "credentials" || step === "reset";
+  const showEmail = step !== "otp";
 
   return (
     <main className="gate">
@@ -345,46 +389,103 @@ function AuthScreen({ mode: initialMode, onMode, onBack, onSession }) {
       </section>
       <section className="panel">
         <div className="mode">
-          <button type="button" className={mode === "login" ? "on" : ""} onClick={() => { setMode("login"); onMode("login"); }}>
+          <button type="button" className={mode === "login" ? "on" : ""} onClick={() => switchMode("login")}>
             Sign in
           </button>
-          <button type="button" className={mode === "signup" ? "on" : ""} onClick={() => { setMode("signup"); onMode("signup"); }}>
+          <button type="button" className={mode === "signup" ? "on" : ""} onClick={() => switchMode("signup")}>
             Create account
           </button>
         </div>
         <form onSubmit={submit}>
-          {mode === "signup" && (
+          {mode === "signup" && step === "credentials" && (
             <label>
               Name
               <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" maxLength={80} />
             </label>
           )}
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
-              minLength={mode === "signup" ? 8 : 1}
-              required
-            />
-          </label>
-          {mode === "signup" && <p className="hint">At least 8 characters. Stored as a hash.</p>}
+          {showEmail && (
+            <label>
+              Email
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+                readOnly={step === "reset"}
+              />
+            </label>
+          )}
+          {(step === "otp" || step === "reset") && (
+            <label>
+              Code
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                required
+              />
+            </label>
+          )}
+          {showPassword && (
+            <label>
+              {step === "reset" ? "New password" : "Password"}
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={mode === "signup" || step === "reset" ? "new-password" : "current-password"}
+                minLength={mode === "signup" || step === "reset" ? 8 : 1}
+                required
+              />
+            </label>
+          )}
+          {mode === "signup" && step === "credentials" && <p className="hint">At least 8 characters. Stored as a hash.</p>}
+          {step === "otp" && <p className="hint">The code expires in 10 minutes.</p>}
+          {notice && <p className="notice">{notice}</p>}
           {error && <p className="error">{error}</p>}
           <button className="primary" type="submit" disabled={busy}>
-            {busy ? "Working" : mode === "signup" ? "Create account" : "Enter"}
+            {busy
+              ? "Working"
+              : step === "otp"
+                ? "Confirm code"
+                : step === "forgot"
+                  ? "Send reset code"
+                  : step === "reset"
+                    ? "Save password"
+                    : mode === "signup"
+                      ? "Create account"
+                      : "Enter"}
           </button>
+          {mode === "login" && step === "credentials" && (
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => {
+                setStep("forgot");
+                setError("");
+                setNotice("");
+              }}
+            >
+              Forgot password?
+            </button>
+          )}
+          {mode === "login" && step !== "credentials" && (
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => {
+                setStep("credentials");
+                setCode("");
+                setError("");
+                setNotice("");
+              }}
+            >
+              Back to sign in
+            </button>
+          )}
         </form>
       </section>
     </main>

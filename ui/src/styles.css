@@ -176,6 +176,16 @@ h1 {
   color: #111;
 }
 
+.text-button {
+  justify-self: start;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--silver);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 form,
 .mint {
   display: grid;

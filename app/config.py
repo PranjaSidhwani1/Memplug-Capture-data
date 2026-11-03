@@ -95,6 +95,36 @@ def postgres_url() -> str:
     return raw
 
 
+def mail_from() -> str:
+    """Visible sender. This is the product address, not a personal inbox."""
+    return os.environ.get("MAIL_FROM", "").strip() or "Memplug <memplug@support.com>"
+
+
+def smtp_host() -> str:
+    return os.environ.get("SMTP_HOST", "").strip()
+
+
+def smtp_port() -> int:
+    raw = os.environ.get("SMTP_PORT", "587").strip()
+    try:
+        port = int(raw)
+    except ValueError:
+        return 587
+    return port if port > 0 else 587
+
+
+def smtp_username() -> str:
+    return os.environ.get("SMTP_USERNAME", "").strip()
+
+
+def smtp_password() -> str:
+    return os.environ.get("SMTP_PASSWORD", "").strip()
+
+
+def mail_configured() -> bool:
+    return bool(smtp_host())
+
+
 def public_api_url(fallback: str) -> str:
     configured = os.environ.get("MEMPLUG_PUBLIC_API_URL", "").strip().rstrip("/")
     if configured:

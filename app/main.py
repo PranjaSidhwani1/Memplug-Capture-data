@@ -26,6 +26,7 @@ from app.config import (
     checkpoint_tokens,
     meta_api_key,
     meta_model,
+    mail_configured,
     postgres_url,
     public_api_url,
 )
@@ -38,12 +39,14 @@ from app.users import (
     create_user,
     ensure_indexes,
     get_user,
+    get_user_by_email,
     join_team,
     leave_team,
     list_api_keys,
     list_teams,
     reveal_api_key,
     revoke_api_key,
+    set_password,
     workspace_for_api_key,
 )
 
@@ -147,6 +150,21 @@ class LoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class CodeIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=4, max_length=12)
+
+
+class EmailIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+class ResetIn(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=4, max_length=12)
+    password: str = Field(min_length=8, max_length=200)
+
+
 class KeyIn(BaseModel):
     name: str = Field(default="default", max_length=40)
     team_id: str | None = None
@@ -174,6 +192,37 @@ class SessionOut(BaseModel):
 
 class MeOut(BaseModel):
     user: UserOut
+
+
+def _send_code(email: str, purpose: str) -> None:
+    from app.codes import clear_code, issue_code
+    from app.mail import MailError, send_reset_code, send_signin_code
+
+    try:
+        code = issue_code(email, purpose)
+    except ValueError:
+        return
+    try:
+        if purpose == "reset":
+            send_reset_code(email, code)
+        else:
+            send_signin_code(email, code)
+    except MailError as exc:
+        clear_code(email, purpose)
+        detail = "The reset code could not be sent" if purpose == "reset" else "The sign-in code could not be sent"
+        raise HTTPException(status_code=503, detail=detail) from exc
+
+
+def _accept_code(email: str, purpose: str, code: str) -> None:
+    from app.codes import check_code
+
+    digits = "".join(ch for ch in code if ch.isdigit())
+    if len(digits) != 6:
+        raise HTTPException(status_code=400, detail="Enter the 6-digit code")
+    try:
+        check_code(email, purpose, digits)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 def _email(value: str) -> str:
@@ -233,11 +282,44 @@ def signup(body: AccountIn) -> dict:
     return {"token": issue_token(user["id"], user["email"]), "user": user}
 
 
-@app.post("/v1/auth/login", response_model=SessionOut)
+@app.post("/v1/auth/login")
 def login(body: LoginIn) -> dict:
     user = authenticate(_email(body.email), body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Email or password is wrong")
+    if not mail_configured():
+        return {"token": issue_token(user["id"], user["email"]), "user": user}
+    _send_code(user["email"], "signin")
+    return {"otp_required": True, "email": user["email"]}
+
+
+@app.post("/v1/auth/otp", response_model=SessionOut)
+def verify_otp(body: CodeIn) -> dict:
+    email = _email(body.email)
+    _accept_code(email, "signin", body.code)
+    user = get_user_by_email(email)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in again")
+    return {"token": issue_token(user["id"], user["email"]), "user": user}
+
+
+@app.post("/v1/auth/forgot")
+def forgot_password(body: EmailIn) -> dict:
+    if not mail_configured():
+        raise HTTPException(status_code=503, detail="Password reset email is not configured")
+    email = _email(body.email)
+    if get_user_by_email(email):
+        _send_code(email, "reset")
+    return {"sent": True}
+
+
+@app.post("/v1/auth/reset", response_model=SessionOut)
+def reset_password(body: ResetIn) -> dict:
+    email = _email(body.email)
+    _accept_code(email, "reset", body.code)
+    user = set_password(email, body.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Sign in again")
     return {"token": issue_token(user["id"], user["email"]), "user": user}
 
 

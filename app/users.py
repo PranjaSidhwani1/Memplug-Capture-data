@@ -31,6 +31,12 @@ def ensure_indexes() -> None:
         return
     db = database()
     db["users"].create_index("email", unique=True)
+    try:
+        db["users"].drop_index("users_google_sub")
+    except Exception:
+        pass
+    db["auth_codes"].create_index([("email", 1), ("purpose", 1)], unique=True)
+    db["auth_codes"].create_index("expires_at", expireAfterSeconds=0)
     keys = db["api_keys"]
     keys.create_index("key_hash", unique=True)
     keys.create_index([("user_id", 1), ("revoked_at", 1)])
@@ -83,12 +89,30 @@ _DUMMY_SALT, _DUMMY_HASH = hash_password("memplug-placeholder")
 
 def authenticate(email: str, password: str) -> dict | None:
     doc = _users().find_one({"email": email})
-    if not doc:
+    salt = doc.get("password_salt") if doc else ""
+    digest = doc.get("password_hash") if doc else ""
+    if not doc or not salt or not digest:
         password_matches(password, _DUMMY_SALT, _DUMMY_HASH)
         return None
-    if not password_matches(password, doc["password_salt"], doc["password_hash"]):
+    if not password_matches(password, salt, digest):
         return None
     return public_user(doc)
+
+
+def get_user_by_email(email: str) -> dict | None:
+    doc = _users().find_one({"email": email})
+    return public_user(doc) if doc else None
+
+
+def set_password(email: str, password: str) -> dict | None:
+    salt, digest = hash_password(password)
+    result = _users().update_one(
+        {"email": email},
+        {"$set": {"password_salt": salt, "password_hash": digest}},
+    )
+    if result.matched_count != 1:
+        return None
+    return get_user_by_email(email)
 
 
 def get_user(user_id: str) -> dict | None:
