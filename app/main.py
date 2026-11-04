@@ -376,6 +376,38 @@ def leave(team_id: str, user: dict = Depends(require_user)) -> dict:
     return {"left": True}
 
 
+def _team_ids(user_id: str) -> list[str]:
+    return [team["id"] for team in list_teams(user_id)]
+
+
+@app.get("/v1/data")
+def account_data(user: dict = Depends(require_user)) -> dict:
+    user_id = user["id"]
+    team_ids = _team_ids(user_id)
+    try:
+        from app.memories import list_memories
+
+        memories = list_memories(user_id, team_ids)
+    except Exception as exc:
+        log.exception("memories could not be listed")
+        raise HTTPException(status_code=503, detail="Memories could not be loaded") from exc
+    return {"memories": memories}
+
+
+@app.delete("/v1/data/memories/{memory_id}")
+def remove_memory(memory_id: str, user: dict = Depends(require_user)) -> dict:
+    from app.memories import delete_memory
+
+    try:
+        removed = delete_memory(memory_id, user["id"], _team_ids(user["id"]))
+    except Exception as exc:
+        log.exception("memory could not be deleted")
+        raise HTTPException(status_code=503, detail="That memory could not be removed") from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail="That memory is not in an account you can change")
+    return {"removed": True}
+
+
 @app.delete("/v1/keys/{key_id}")
 def delete_key(key_id: str, user: dict = Depends(require_user)) -> dict:
     if not revoke_api_key(user["id"], key_id):

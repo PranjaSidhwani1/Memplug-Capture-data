@@ -6,10 +6,12 @@ import {
   downloadBundle,
   joinTeam,
   leaveTeam,
+  listData,
   listKeys,
   listTeams,
   login,
   me,
+  removeMemory,
   requestReset,
   resetPassword,
   revokeKey,
@@ -121,6 +123,7 @@ export default function App() {
 
 function ProductPage({ onSession }) {
   const [auth, setAuth] = useState("");
+  const [page, setPage] = useState("overview");
 
   if (auth) {
     return (
@@ -143,6 +146,14 @@ function ProductPage({ onSession }) {
             <span>Memory for agents</span>
           </div>
         </div>
+        <nav className="tabs" aria-label="Site">
+          <button type="button" className={page === "overview" ? "on" : ""} onClick={() => setPage("overview")}>
+            Overview
+          </button>
+          <button type="button" className={page === "docs" ? "on" : ""} onClick={() => setPage("docs")}>
+            Docs
+          </button>
+        </nav>
         <div className="who">
           <a href={contactHref("Memplug")}>Contact</a>
           <button type="button" onClick={() => setAuth("login")}>
@@ -154,6 +165,65 @@ function ProductPage({ onSession }) {
         </div>
       </header>
       <main>
+        {page === "docs" ? (
+          <section className="band open" id="configure">
+            <div className="section-head">
+              <p className="eyebrow">Docs</p>
+              <h2>How to configure</h2>
+            </div>
+            <p className="lede tight">
+              Six steps from a new account to an editor that can capture chat and search memory.
+            </p>
+            <ol className="steps">
+              <li>
+                <span>01</span>
+                <div>
+                  <h3>Create an account</h3>
+                  <p>The account is yours. Sign in when you need the console again.</p>
+                </div>
+              </li>
+              <li>
+                <span>02</span>
+                <div>
+                  <h3>Pick a workspace</h3>
+                  <p>Stay on Personal, or create a team and share the join code. Someone else joins with that code.</p>
+                </div>
+              </li>
+              <li>
+                <span>03</span>
+                <div>
+                  <h3>Mint the key there</h3>
+                  <p>A key created under Personal is a personal key. A key created under a team is a team key.</p>
+                </div>
+              </li>
+              <li>
+                <span>04</span>
+                <div>
+                  <h3>Download the hook JSON</h3>
+                  <p>Choose Cursor, Claude Code, or Codex, and macOS or Windows. The file already contains the key.</p>
+                </div>
+              </li>
+              <li>
+                <span>05</span>
+                <div>
+                  <h3>Save it where the editor looks</h3>
+                  <p>The card shows the path. Restart the editor. New messages start landing in that workspace.</p>
+                </div>
+              </li>
+              <li>
+                <span>06</span>
+                <div>
+                  <h3>Add the MCP server</h3>
+                  <p>Point Cursor at your Memplug URL with the same key. The agent then searches and saves in that workspace only.</p>
+                </div>
+              </li>
+            </ol>
+            <button className="primary" type="button" onClick={() => setAuth("signup")}>
+              Create account
+            </button>
+          </section>
+        ) : (
+          <>
         <section className="hero">
           <p className="eyebrow">A memory layer you own</p>
           <h1>Your agents remember the work. Your team can share it.</h1>
@@ -166,7 +236,9 @@ function ProductPage({ onSession }) {
             <button className="primary" type="button" onClick={() => setAuth("signup")}>
               Start with an account
             </button>
-            <a href="#configure">How to configure</a>
+            <button className="quiet" type="button" onClick={() => setPage("docs")}>
+              How to configure
+            </button>
           </div>
         </section>
         <section className="band" id="serve">
@@ -218,59 +290,6 @@ function ProductPage({ onSession }) {
             <li>You choose the workspace before the key is minted.</li>
           </ul>
         </section>
-        <section className="band" id="configure">
-          <div className="section-head">
-            <p className="eyebrow">Configure</p>
-            <h2>Six steps, then the agent is connected.</h2>
-          </div>
-          <ol className="steps">
-            <li>
-              <span>01</span>
-              <div>
-                <h3>Create an account</h3>
-                <p>The account is yours. Sign in when you need the console again.</p>
-              </div>
-            </li>
-            <li>
-              <span>02</span>
-              <div>
-                <h3>Pick a workspace</h3>
-                <p>Stay on Personal, or create a team and share the join code. Someone else joins with that code.</p>
-              </div>
-            </li>
-            <li>
-              <span>03</span>
-              <div>
-                <h3>Mint the key there</h3>
-                <p>A key created under Personal is a personal key. A key created under a team is a team key.</p>
-              </div>
-            </li>
-            <li>
-              <span>04</span>
-              <div>
-                <h3>Download the hook JSON</h3>
-                <p>Choose Cursor, Claude Code, or Codex, and macOS or Windows. The file already contains the key.</p>
-              </div>
-            </li>
-            <li>
-              <span>05</span>
-              <div>
-                <h3>Save it where the editor looks</h3>
-                <p>The card shows the path. Restart the editor. New messages start landing in that workspace.</p>
-              </div>
-            </li>
-            <li>
-              <span>06</span>
-              <div>
-                <h3>Add the MCP server</h3>
-                <p>Point Cursor at your Memplug URL with the same key. The agent then searches and saves in that workspace only.</p>
-              </div>
-            </li>
-          </ol>
-          <button className="primary" type="button" onClick={() => setAuth("signup")}>
-            Create account
-          </button>
-        </section>
         <section className="band split" id="contact">
           <div>
             <p className="eyebrow">Contact</p>
@@ -284,6 +303,8 @@ function ProductPage({ onSession }) {
             <a href={contactHref("Memplug issue")}>{SUPPORT_EMAIL}</a>
           </p>
         </section>
+          </>
+        )}
       </main>
     </div>
   );
@@ -492,6 +513,139 @@ function AuthScreen({ mode: initialMode, onMode, onBack, onSession }) {
   );
 }
 
+function stamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString();
+}
+
+function inScope(item, scope) {
+  if (scope === "all") return true;
+  if (scope === "personal") return item.owner_type !== "team";
+  return item.owner_type === "team" && item.owner_id === scope;
+}
+
+function DataView({ token, teams }) {
+  const [records, setRecords] = useState(null);
+  const [scope, setScope] = useState("all");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [removing, setRemoving] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    listData(token)
+      .then((payload) => {
+        if (!cancelled) setRecords(payload);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  useEffect(() => {
+    if (scope !== "all" && scope !== "personal" && !teams.some((team) => team.id === scope)) {
+      setScope("all");
+    }
+  }, [teams, scope]);
+
+  async function remove(item) {
+    if (!window.confirm("Remove this memory? It is deleted for this workspace.")) return;
+    setRemoving(item.id);
+    setError("");
+    setNotice("");
+    try {
+      await removeMemory(token, item.id);
+      setRecords((current) => {
+        if (!current) return current;
+        return { ...current, memories: current.memories.filter((row) => row.id !== item.id) };
+      });
+      setNotice("Memory removed.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRemoving("");
+    }
+  }
+
+  const memories = (records?.memories || []).filter((item) => inScope(item, scope));
+  const owners = [];
+  if (scope === "all" || scope === "personal") owners.push({ id: "personal", name: "Personal" });
+  for (const team of teams) {
+    if (scope === "all" || scope === team.id) owners.push({ id: team.id, name: team.name });
+  }
+
+  return (
+    <section className="band open" id="data">
+      <div className="section-head">
+        <p className="eyebrow">Data</p>
+        <h2>What this account holds.</h2>
+      </div>
+      <p className="lede tight">
+        Personal memories are only yours. Every team you have joined is included, and any memory can be removed.
+      </p>
+      <div className="scope" role="group" aria-label="Workspace">
+        <button type="button" className={scope === "all" ? "on" : ""} onClick={() => setScope("all")}>
+          All
+        </button>
+        <button type="button" className={scope === "personal" ? "on" : ""} onClick={() => setScope("personal")}>
+          Personal
+        </button>
+        {teams.map((team) => (
+          <button
+            key={team.id}
+            type="button"
+            className={scope === team.id ? "on" : ""}
+            onClick={() => setScope(team.id)}
+          >
+            {team.name}
+          </button>
+        ))}
+      </div>
+      {(error || notice) && <p className={error ? "error" : "notice"}>{error || notice}</p>}
+      {records === null && !error && <p className="hint">Loading data</p>}
+      {records && memories.length === 0 && <p className="hint">No memories for this view yet.</p>}
+      {owners.map((owner) => {
+        const ownedMemories = memories.filter((item) =>
+          owner.id === "personal" ? item.owner_type !== "team" : item.owner_id === owner.id,
+        );
+        if (ownedMemories.length === 0) return null;
+        return (
+          <section key={owner.id} className="data-owner">
+            <h3>{owner.name}</h3>
+            <div className="records">
+              {ownedMemories.map((item) => (
+                <article key={item.id} className="record">
+                  <div>
+                    <p className="meta">
+                      {[item.domain, item.sub_domain, item.memory_type, item.source, stamp(item.updated_at)]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                    <p>{item.content}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="danger text"
+                    disabled={removing === item.id}
+                    onClick={() => remove(item)}
+                  >
+                    {removing === item.id ? "Removing" : "Remove"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </section>
+  );
+}
+
 function belongsToWorkspace(item, workspace) {
   const kind = item.workspace_type || "user";
   if (!workspace) return kind !== "team";
@@ -530,6 +684,7 @@ function Console({ token, user, onSignOut }) {
   const [keyBusy, setKeyBusy] = useState(false);
   const [teamBusy, setTeamBusy] = useState(false);
   const [downloading, setDownloading] = useState("");
+  const [page, setPage] = useState("console");
 
   useEffect(() => {
     let cancelled = false;
@@ -700,8 +855,18 @@ function Console({ token, user, onSignOut }) {
             <span>Console</span>
           </div>
         </div>
+        <nav className="tabs" aria-label="Console">
+          <button type="button" className={page === "console" ? "on" : ""} onClick={() => setPage("console")}>
+            Console
+          </button>
+          <button type="button" className={page === "data" ? "on" : ""} onClick={() => setPage("data")}>
+            Data
+          </button>
+          <button type="button" className={page === "docs" ? "on" : ""} onClick={() => setPage("docs")}>
+            Docs
+          </button>
+        </nav>
         <div className="who">
-          <a href="#process">Setup</a>
           <a href={contactHref("Memplug issue")}>Contact</a>
           <span>{user.name || user.email}</span>
           <button type="button" onClick={onSignOut}>
@@ -711,11 +876,15 @@ function Console({ token, user, onSignOut }) {
       </header>
       {(error || notice) && <p className={error ? "error status" : "notice status"}>{error || notice}</p>}
       <main className="desk">
-        <section className="band" id="process">
+        {page === "data" ? (
+          <DataView token={token} teams={teams} />
+        ) : page === "docs" ? (
+        <section className="band open" id="process">
           <div className="section-head">
-            <p className="eyebrow">After you sign in</p>
-            <h2>Connect this account to an editor.</h2>
+            <p className="eyebrow">Docs</p>
+            <h2>How to configure</h2>
           </div>
+          <p className="lede tight">Connect this account to an editor. The controls stay on the Console tab.</p>
           <ol className="steps">
             <li>
               <span>01</span>
@@ -753,7 +922,7 @@ function Console({ token, user, onSignOut }) {
               <div>
                 <h3>Add MCP with that same key</h3>
                 <p>
-                  The agent does not send a user id. The key is the workspace. Paste the config below into Cursor.
+                  The agent does not send a user id. The key is the workspace. Paste the MCP config from the Console tab into Cursor.
                   Memories are written when a conversation crosses the token checkpoint, or after 30 minutes of
                   quiet. The raw chat stays. The memory is what the agent can search later.
                 </p>
@@ -761,8 +930,9 @@ function Console({ token, user, onSignOut }) {
             </li>
           </ol>
         </section>
-
-        <section className="band" id="workspaces">
+        ) : (
+        <>
+        <section className="band open" id="workspaces">
           <div className="section-head">
             <p className="eyebrow">Workspaces</p>
             <h2>Choose where the next key belongs.</h2>
@@ -972,6 +1142,8 @@ function Console({ token, user, onSignOut }) {
             <a href={contactHref("Memplug issue")}>{SUPPORT_EMAIL}</a>
           </p>
         </section>
+        </>
+        )}
       </main>
     </div>
   );

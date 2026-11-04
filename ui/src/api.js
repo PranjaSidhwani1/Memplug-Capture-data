@@ -94,6 +94,14 @@ export function configMeta(token) {
   return request("/v1/config/meta", { token });
 }
 
+export function listData(token) {
+  return request("/v1/data", { token });
+}
+
+export function removeMemory(token, id) {
+  return request(`/v1/data/memories/${encodeURIComponent(id)}`, { method: "DELETE", token });
+}
+
 export async function downloadBundle(token, tool, osName, keyId) {
   const params = new URLSearchParams({ tool, os: osName, key_id: keyId });
   const response = await fetch(`/v1/config/bundle?${params}`, {

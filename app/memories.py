@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from datetime import datetime, timezone
 
 from app.config import postgres_url
 
@@ -106,6 +107,79 @@ def _upsert_memory(
         ),
     ).fetchone()
     return row[0]
+
+
+def list_memories(user_id: str, team_ids: list[str]) -> list[dict]:
+    """Personal memories, plus every team this account belongs to."""
+    if not postgres_url() or not user_id:
+        return []
+    teams = [team_id for team_id in team_ids if team_id]
+    sql = """
+        SELECT id::text, owner_type, owner_id, domain, COALESCE(sub_domain, ''),
+               content, memory_type, source, project, session_id, created_at, updated_at
+        FROM memories
+        WHERE owner_type = 'user' AND owner_id = %s
+    """
+    params: list[object] = [user_id]
+    if teams:
+        sql += " OR (owner_type = 'team' AND owner_id = ANY(%s))"
+        params.append(teams)
+    sql += " ORDER BY updated_at DESC, created_at DESC"
+    with _connect() as conn:
+        _ensure_schema(conn)
+        rows = conn.execute(sql, params).fetchall()
+    return [_memory_out(row) for row in rows]
+
+
+def delete_memory(memory_id: str, user_id: str, team_ids: list[str]) -> bool:
+    if not postgres_url() or not user_id:
+        return False
+    try:
+        parsed = uuid.UUID(memory_id)
+    except ValueError:
+        return False
+    teams = {team_id for team_id in team_ids if team_id}
+    with _connect() as conn:
+        _ensure_schema(conn)
+        row = conn.execute(
+            "SELECT owner_type, owner_id FROM memories WHERE id = %s",
+            (parsed,),
+        ).fetchone()
+        if not row or not _memory_allowed(row[0], row[1], user_id, teams):
+            return False
+        conn.execute("DELETE FROM memories WHERE id = %s", (parsed,))
+        conn.commit()
+    log.info("postgres deleted id=%s user=%s", memory_id, user_id)
+    return True
+
+
+def _memory_allowed(owner_type: str, owner_id: str, user_id: str, team_ids: set[str]) -> bool:
+    if owner_type == "team":
+        return owner_id in team_ids
+    return owner_type == "user" and owner_id == user_id
+
+
+def _memory_out(row) -> dict:
+    return {
+        "id": row[0],
+        "owner_type": row[1] if row[1] == "team" else "user",
+        "owner_id": row[2],
+        "domain": row[3] or "",
+        "sub_domain": row[4] or "",
+        "content": row[5] or "",
+        "memory_type": row[6] or "",
+        "source": row[7] or "",
+        "project": row[8] or "",
+        "session_id": row[9] or "",
+        "created_at": _iso(row[10]),
+        "updated_at": _iso(row[11]),
+    }
+
+
+def _iso(value) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return "" if value is None else str(value)
 
 
 def ensure_schema() -> None:
