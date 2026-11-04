@@ -122,7 +122,7 @@ def smtp_password() -> str:
 
 
 def mail_configured() -> bool:
-    return bool(smtp_host())
+    return bool(smtp_host() and smtp_password())
 
 
 def public_api_url(fallback: str) -> str:
