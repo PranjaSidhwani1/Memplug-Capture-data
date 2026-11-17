@@ -87,8 +87,8 @@ def save_memory(
 
     Call this when the user says "remember this" or equivalent. Do not wait
     for a checkpoint. A correction in chat also uses this tool. An exact
-    duplicate is stored once. A very similar fact in the same domain replaces
-    the older one.
+    duplicate is stored once. A very similar fact in the same domain is stored
+    as a new memory, and the older memory is kept and marked superseded.
 
     Write content that can stand alone later. A simple fact is one sentence.
     When it has a reason, a constraint, an exception, or related details,

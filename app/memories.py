@@ -89,7 +89,9 @@ def _upsert_memory(
             source = EXCLUDED.source,
             session_id = EXCLUDED.session_id,
             project = EXCLUDED.project,
-            updated_at = now()
+            updated_at = now(),
+            status = 'active',
+            superseded_by = NULL
         RETURNING id
         """,
         (
@@ -118,11 +120,11 @@ def list_memories(user_id: str, team_ids: list[str]) -> list[dict]:
         SELECT id::text, owner_type, owner_id, domain, COALESCE(sub_domain, ''),
                content, memory_type, source, project, session_id, created_at, updated_at
         FROM memories
-        WHERE owner_type = 'user' AND owner_id = %s
+        WHERE owner_type = 'user' AND owner_id = %s AND status = 'active'
     """
     params: list[object] = [user_id]
     if teams:
-        sql += " OR (owner_type = 'team' AND owner_id = ANY(%s))"
+        sql += " OR (owner_type = 'team' AND owner_id = ANY(%s) AND status = 'active')"
         params.append(teams)
     sql += " ORDER BY updated_at DESC, created_at DESC"
     with _connect() as conn:
@@ -259,22 +261,16 @@ def _ensure_schema(conn) -> None:
             )
             """
         )
+        from app.graph_schema import ensure_graph_schema
+
+        ensure_graph_schema(conn)
         conn.commit()
         _schema_ready = True
 
 
 def _drop_retired_columns(conn) -> None:
     """Remove columns the product no longer stores. Safe on every boot."""
-    has_status = conn.execute(
-        """
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'memories' AND column_name = 'status'
-        """
-    ).fetchone()
-    if has_status:
-        conn.execute("DELETE FROM memories WHERE status = 'superseded'")
-    for column in ("entities", "entity", "confidence", "sub_domain_norm", "status", "superseded_by"):
+    for column in ("entities", "entity", "sub_domain_norm"):
         conn.execute(f"ALTER TABLE memories DROP COLUMN IF EXISTS {column}")
 
 
@@ -294,6 +290,12 @@ def _ensure_owner(conn) -> None:
         ON memories (owner_type, owner_id, content_norm)
         """
     )
+
+
+def embed_texts(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+    return _embed(texts)
 
 
 def _embed(texts: list[str]) -> list[list[float]]:

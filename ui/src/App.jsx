@@ -32,19 +32,19 @@ const TOOLS = [
   {
     id: "cursor",
     name: "Cursor",
-    detail: "beforeSubmitPrompt and afterAgentResponse",
+    detail: "beforeSubmitPrompt, afterAgentResponse, and postToolUse",
     note: "Save it as the user hooks file, then restart Cursor.",
   },
   {
     id: "claude",
     name: "Claude Code",
-    detail: "UserPromptSubmit and Stop",
+    detail: "UserPromptSubmit, Stop, and PostToolUse",
     note: "If settings.json already exists, merge this hooks object into it.",
   },
   {
     id: "codex",
     name: "Codex",
-    detail: "UserPromptSubmit and Stop",
+    detail: "UserPromptSubmit, Stop, and PostToolUse",
     note: "Open /hooks in Codex and trust the new command. Hooks run in the background.",
   },
 ];
@@ -251,8 +251,9 @@ function ProductPage({ onSession }) {
               <span>01</span>
               <h3>Capture</h3>
               <p>
-                A small hook file watches the editor. User and assistant messages are saved to
-                your account. The editor does not install a database or an embedding model.
+                A small hook file watches the editor. User prompts, assistant replies, and tool
+                calls are saved to your account. The editor does not install a database or an
+                embedding model.
               </p>
             </article>
             <article>

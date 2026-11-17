@@ -64,9 +64,6 @@ async def _lifespan(_app: FastAPI):
     ensure_indexes()
     ensure_store_indexes()
     log.info("CHECKPOINT_TOKENS=%s CHECKPOINT_IDLE_MINUTES=%s", checkpoint_tokens(), checkpoint_idle_minutes())
-    from app.checkpoint import start_idle_sweep
-
-    start_idle_sweep()
     if postgres_url() and meta_api_key() and meta_model():
         try:
             from app.memories import ensure_schema
@@ -75,6 +72,12 @@ async def _lifespan(_app: FastAPI):
             log.info("memory tables ready")
         except Exception:
             log.exception("memory tables were not created")
+        try:
+            from app.jobs import start_worker
+
+            start_worker()
+        except Exception:
+            log.exception("memory job worker was not started")
     else:
         log.info("memory extraction is waiting for META_API_KEY, META_MODEL, and DATABASE_URL")
     if postgres_url():
@@ -134,9 +137,15 @@ class MessageIn(BaseModel):
     source: str
     session_id: str
     project: str = ""
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "tool"]
     content: str
     timestamp: str | None = None
+    event_id: str = Field(default="", max_length=200)
+    external_message_id: str = Field(default="", max_length=200)
+    tool_name: str = ""
+    tool_use_id: str = ""
+    tool_input: str = ""
+    tool_status: str = ""
 
 
 class AccountIn(BaseModel):
@@ -460,6 +469,12 @@ def capture_message(body: MessageIn, auth: dict = Depends(require_api_key)) -> d
         role=body.role,
         content=body.content,
         timestamp=body.timestamp,
+        tool_name=body.tool_name,
+        tool_use_id=body.tool_use_id,
+        tool_input=body.tool_input,
+        tool_status=body.tool_status,
+        event_id=body.event_id,
+        external_message_id=body.external_message_id,
         user_id=auth.get("user_id"),
         workspace_type=auth.get("workspace_type") or "user",
         workspace_id=auth.get("workspace_id") or auth.get("user_id") or "",

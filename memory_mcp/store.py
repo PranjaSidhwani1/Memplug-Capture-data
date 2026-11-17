@@ -187,11 +187,32 @@ class MemoryStore:
                     """,
                     (text, text, *scope_params, _RRF_POOL),
                 ).fetchall()
+                graph_rows = []
+                conn.execute("SAVEPOINT graph_hits")
+                try:
+                    from app.retrieve import graph_hits
+
+                    graph_rows = graph_hits(
+                        conn,
+                        owner_type=owner[0],
+                        owner_id=owner[1],
+                        domains=selected,
+                        query=text,
+                        vector=vector,
+                        sub_domain=_norm(sub) if sub else "",
+                        memory_type=kind,
+                    )
+                    conn.execute("RELEASE SAVEPOINT graph_hits")
+                except Exception:
+                    log.exception("graph retrieval failed")
+                    conn.execute("ROLLBACK TO SAVEPOINT graph_hits")
+                    conn.execute("RELEASE SAVEPOINT graph_hits")
+                    graph_rows = []
         except Exception:
             log.exception("search_memory failed")
             return "Memory search failed."
 
-        texts = _fuse(vector_rows, lexical_rows, limit)
+        texts = _fuse(vector_rows, lexical_rows, limit, graph_rows)
         log.info("mcp search query=%s hits=%s", text, len(texts))
         return "\n".join(texts)
 
@@ -210,6 +231,7 @@ class MemoryStore:
                     FROM memories
                     WHERE owner_type = %s
                       AND owner_id = %s
+                      AND status = 'active'
                       AND domain <> ''
                     """,
                     owner,
@@ -246,6 +268,7 @@ class MemoryStore:
                 WHERE owner_type = %s
                   AND owner_id = %s
                   AND domain = %s
+                  AND status = 'active'
                   AND sub_domain IS NOT NULL
                   AND sub_domain <> ''
                 ORDER BY sub_domain
@@ -297,16 +320,7 @@ class MemoryStore:
         conn.execute(
             "ALTER TABLE memories ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()"
         )
-        has_status = conn.execute(
-            """
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'memories' AND column_name = 'status'
-            """
-        ).fetchone()
-        if has_status:
-            conn.execute("DELETE FROM memories WHERE status = 'superseded'")
-        for column in ("entities", "entity", "confidence", "sub_domain_norm", "status", "superseded_by"):
+        for column in ("entities", "entity", "sub_domain_norm"):
             conn.execute(f"ALTER TABLE memories DROP COLUMN IF EXISTS {column}")
         conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS owner_type TEXT")
         conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS owner_id TEXT")
@@ -334,6 +348,9 @@ class MemoryStore:
             ON memories USING GIN (to_tsvector('english', content))
             """
         )
+        from app.graph_schema import ensure_graph_schema
+
+        ensure_graph_schema(conn)
 
     def _upsert(
         self,
@@ -349,7 +366,7 @@ class MemoryStore:
     ) -> dict:
         existing = conn.execute(
             """
-            SELECT id
+            SELECT id, status, superseded_by
             FROM memories
             WHERE owner_type = %s AND owner_id = %s AND content_norm = %s
             LIMIT 1
@@ -358,12 +375,15 @@ class MemoryStore:
         ).fetchone()
         if existing is not None:
             memory_id = existing[0]
+            successor = existing[2] if existing[1] == "superseded" else None
             conn.execute(
                 """
                 UPDATE memories
                 SET domain = %s,
                     sub_domain = %s,
                     memory_type = %s,
+                    status = 'active',
+                    superseded_by = NULL,
                     source_event_ids = COALESCE(
                         (
                             SELECT jsonb_agg(DISTINCT item)
@@ -378,6 +398,15 @@ class MemoryStore:
                 """,
                 (domain, sub_domain, memory_type, Jsonb(source_event_ids), memory_id),
             )
+            if successor is not None and successor != memory_id:
+                conn.execute(
+                    """
+                    UPDATE memories
+                    SET status = 'superseded', superseded_by = %s, updated_at = now()
+                    WHERE id = %s AND status = 'active'
+                    """,
+                    (memory_id, successor),
+                )
             conn.execute(
                 """
                 INSERT INTO memory_vectors (memory_id, embedding)
@@ -396,6 +425,7 @@ class MemoryStore:
             WHERE m.owner_type = %s
               AND m.owner_id = %s
               AND m.domain = %s
+              AND m.status = 'active'
             ORDER BY v.embedding <=> %s::vector
             LIMIT 1
             """,
@@ -403,35 +433,41 @@ class MemoryStore:
         ).fetchone()
 
         if near is not None and float(near[1]) >= _SUPERSEDE_SIMILARITY:
-            memory_id = near[0]
+            memory_id = uuid.uuid4()
             conn.execute(
                 """
-                UPDATE memories
-                SET domain = %s,
-                    sub_domain = %s,
-                    content = %s,
-                    content_norm = %s,
-                    memory_type = %s,
-                    source_event_ids = COALESCE(
-                        (
-                            SELECT jsonb_agg(DISTINCT item)
-                            FROM jsonb_array_elements_text(
-                                COALESCE(source_event_ids, '[]'::jsonb) || %s::jsonb
-                            ) AS item
-                        ),
-                        '[]'::jsonb
-                    ),
-                    updated_at = now()
-                WHERE id = %s
+                INSERT INTO memories (
+                    id, user_id, owner_type, owner_id, domain, sub_domain, content, content_norm,
+                    memory_type, source, session_id, project, source_event_ids, status, created_at, updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, 'mcp', '', '', %s::jsonb, 'active', now(), now()
+                )
                 """,
-                (domain, sub_domain, content, content_norm, memory_type, Jsonb(source_event_ids), memory_id),
+                (
+                    memory_id,
+                    self.user_id,
+                    self.owner_type,
+                    self.owner_id,
+                    domain,
+                    sub_domain,
+                    content,
+                    content_norm,
+                    memory_type,
+                    Jsonb(source_event_ids),
+                ),
             )
             conn.execute(
                 """
-                INSERT INTO memory_vectors (memory_id, embedding)
-                VALUES (%s, %s)
-                ON CONFLICT (memory_id) DO UPDATE SET embedding = EXCLUDED.embedding
+                UPDATE memories
+                SET status = 'superseded', superseded_by = %s, updated_at = now()
+                WHERE id = %s AND status = 'active'
                 """,
+                (memory_id, near[0]),
+            )
+            conn.execute(
+                "INSERT INTO memory_vectors (memory_id, embedding) VALUES (%s, %s)",
                 (memory_id, vector),
             )
             return {"status": "saved", "id": str(memory_id), "domain": domain, "sub_domain": sub_domain}
@@ -495,6 +531,7 @@ def _scope_sql(sub: str, kind: str) -> tuple[str, list[object]]:
         m.owner_type = %s
         AND m.owner_id = %s
         AND m.domain = ANY(%s)
+        AND m.status = 'active'
     """
     params: list[object] = []
     if sub:
@@ -506,27 +543,11 @@ def _scope_sql(sub: str, kind: str) -> tuple[str, list[object]]:
     return sql, params
 
 
-def _fuse(vector_rows, lexical_rows, limit: int) -> list[str]:
-    """Reciprocal rank fusion. A memory in both lists outranks one list alone."""
-    scores: dict[str, float] = {}
-    content: dict[str, str] = {}
-    order: list[str] = []
-    for rows in (vector_rows, lexical_rows):
-        for rank, row in enumerate(rows, start=1):
-            memory_id = str(row[0])
-            scores[memory_id] = scores.get(memory_id, 0.0) + (1.0 / (_RRF_K + rank))
-            content[memory_id] = row[1] if isinstance(row[1], str) else ""
-            if memory_id not in order:
-                order.append(memory_id)
-    ranked = sorted(order, key=lambda memory_id: (-scores[memory_id], order.index(memory_id)))
-    texts: list[str] = []
-    for memory_id in ranked:
-        piece = " ".join(content[memory_id].split())
-        if piece:
-            texts.append(piece)
-        if len(texts) >= limit:
-            break
-    return texts
+def _fuse(vector_rows, lexical_rows, limit: int, graph_rows=()) -> list[str]:
+    """Reciprocal rank fusion across vector, keyword, and graph hits."""
+    from app.retrieve import fuse_rows
+
+    return fuse_rows([vector_rows, lexical_rows, graph_rows], limit)
 
 
 def _clean_list(values: list[str] | None, *, limit: int, item_length: int) -> list[str]:

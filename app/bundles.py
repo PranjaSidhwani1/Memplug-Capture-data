@@ -52,6 +52,8 @@ def build_bundle(tool: str, system: str, api_url: str, api_key: str) -> dict:
             "hooks": {
                 "beforeSubmitPrompt": [entry],
                 "afterAgentResponse": [dict(entry)],
+                "postToolUse": [dict(entry)],
+                "postToolUseFailure": [dict(entry)],
             },
         }
     handler = {"type": "command", "command": command, "timeout": 15, "async": True}
@@ -59,8 +61,15 @@ def build_bundle(tool: str, system: str, api_url: str, api_key: str) -> dict:
         handler["shell"] = "powershell"
     if system == "windows" and tool == "codex":
         handler["commandWindows"] = command
-    group = {"hooks": [handler]}
-    return {"hooks": {"UserPromptSubmit": [group], "Stop": [{"hooks": [dict(handler)]}]}}
+    events = {
+        "UserPromptSubmit": [{"hooks": [handler]}],
+        "Stop": [{"hooks": [dict(handler)]}],
+        "PostToolUse": [{"hooks": [dict(handler)]}],
+    }
+    # Codex has PostToolUse, including failed commands, and no failure event.
+    if tool == "claude":
+        events["PostToolUseFailure"] = [{"hooks": [dict(handler)]}]
+    return {"hooks": events}
 
 
 def _command(tool: str, system: str, api_url: str, api_key: str) -> str:
@@ -108,6 +117,16 @@ def _script(api_url: str, api_key: str, source: str) -> str:
             "            if name:",
             "                return name",
             "    return leaf(payload.get('cwd'))",
+            "def dump(value):",
+            "    if value is None:",
+            "        return ''",
+            "    if isinstance(value,str):",
+            "        return clip(value)",
+            "    try:",
+            "        rendered=json.dumps(value,ensure_ascii=False,default=str)",
+            "    except Exception:",
+            "        rendered=str(value)",
+            "    return clip(rendered)",
             "raw=sys.stdin.buffer.read()",
             "if not raw.strip():",
             "    raise SystemExit(0)",
@@ -125,6 +144,10 @@ def _script(api_url: str, api_key: str, source: str) -> str:
             "    raise SystemExit(0)",
             "role=''",
             "text=''",
+            "tool_name=''",
+            "tool_id=''",
+            "tool_input=''",
+            "tool_status=''",
             "if name in ('beforesubmitprompt','userpromptsubmit'):",
             "    role='user'",
             "    prompt=payload.get('prompt')",
@@ -136,9 +159,39 @@ def _script(api_url: str, api_key: str, source: str) -> str:
             "    text=clip(payload.get('text'))",
             "    if not text:",
             "        text=clip(payload.get('last_assistant_message'))",
+            "elif name in ('posttooluse','posttoolusefailure'):",
+            "    role='tool'",
+            "    tool_name=str(payload.get('tool_name') or '').strip()",
+            "    tool_id=str(payload.get('tool_use_id') or '').strip()",
+            "    tool_input=dump(payload.get('tool_input'))",
+            "    failed=name.endswith('failure')",
+            "    output=None",
+            "    if failed:",
+            "        output=payload.get('error_message')",
+            "        if output in (None,''):",
+            "            output=payload.get('error')",
+            "        kind=payload.get('failure_type')",
+            "        if isinstance(kind,str) and kind.strip() and isinstance(output,str) and kind.strip() not in output:",
+            "            output=kind.strip()+': '+output",
+            "        tool_status=kind.strip().lower() if isinstance(kind,str) and kind.strip().lower() in ('error','timeout','permission_denied') else 'error'",
+            "    else:",
+            "        tool_status='ok'",
+            "    if output in (None,''):",
+            "        output=payload.get('tool_output')",
+            "    if output in (None,''):",
+            "        output=payload.get('tool_response')",
+            "    text=dump(output) or '(no output)'",
+            "    if not tool_name:",
+            "        raise SystemExit(0)",
             "if not role or not text:",
             "    raise SystemExit(0)",
-            "body=json.dumps({'source':SOURCE,'session_id':session,'project':project(payload),'role':role,'content':text}).encode()",
+            "fields={'source':SOURCE,'session_id':session,'project':project(payload),'role':role,'content':text}",
+            "if role=='tool':",
+            "    fields['tool_name']=tool_name",
+            "    fields['tool_use_id']=tool_id",
+            "    fields['tool_input']=tool_input",
+            "    fields['tool_status']=tool_status",
+            "body=json.dumps(fields).encode()",
             "request=urllib.request.Request(URL+'/v1/capture/message',data=body,headers={'Authorization':'Bearer '+KEY,'Content-Type':'application/json'},method='POST')",
             "try:",
             "    urllib.request.urlopen(request,timeout=8).read()",
