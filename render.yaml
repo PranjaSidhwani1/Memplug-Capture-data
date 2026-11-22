@@ -32,6 +32,16 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO
+        sync: false
+      - key: STRIPE_PRICE_ENTERPRISE
+        sync: false
+      - key: MEMPLUG_SUPPORT_EMAIL
+        sync: false
       - key: CHECKPOINT_TOKENS
         value: "1000"
       - key: CHECKPOINT_IDLE_MINUTES

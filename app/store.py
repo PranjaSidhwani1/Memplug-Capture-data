@@ -99,7 +99,7 @@ def save_message(
     key = {"source": source, "session_id": session_id}
     if user_id:
         key["user_id"] = user_id
-    message = {"role": role, "content": text, "timestamp": timestamp or _now()}
+    message = {"role": role, "content": text, "timestamp": timestamp or _now(), "saved_at": _now()}
     if role == "tool":
         message["tool_name"] = tool_name.strip()
         message["tool_use_id"] = tool_use_id.strip()

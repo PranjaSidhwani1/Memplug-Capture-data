@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
 import os
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -44,6 +46,7 @@ from app.users import (
     leave_team,
     list_api_keys,
     list_teams,
+    member_of_team,
     reveal_api_key,
     revoke_api_key,
     set_password,
@@ -80,6 +83,21 @@ async def _lifespan(_app: FastAPI):
             log.exception("memory job worker was not started")
     else:
         log.info("memory extraction is waiting for META_API_KEY, META_MODEL, and DATABASE_URL")
+    try:
+        from app.access import ensure_usage_indexes, retention_epoch
+        from app.billing import ensure_billing_indexes
+
+        ensure_usage_indexes()
+        ensure_billing_indexes()
+        log.info("retention counts from %s", retention_epoch().isoformat())
+    except Exception:
+        log.exception("billing indexes were not created")
+    try:
+        from app.retention import start_purge_loop
+
+        start_purge_loop()
+    except Exception:
+        log.exception("retention purge was not started")
     if postgres_url():
         try:
             from memory_mcp.server import warmup
@@ -187,11 +205,26 @@ class JoinIn(BaseModel):
     code: str = Field(min_length=1, max_length=32)
 
 
+class PlanIn(BaseModel):
+    plan: Literal["pro", "enterprise"]
+
+
+class SyncIn(BaseModel):
+    session_id: str = Field(default="", max_length=255)
+
+
+class SupportIn(BaseModel):
+    subject: str = Field(min_length=1, max_length=120)
+    message: str = Field(min_length=1, max_length=5000)
+
+
 class UserOut(BaseModel):
     id: str
     email: str
     name: str
     created_at: str
+    plan: str = "free"
+    plan_status: str = "none"
 
 
 class SessionOut(BaseModel):
@@ -276,6 +309,113 @@ def _api_base(request: Request) -> str:
     return public_api_url(str(request.base_url))
 
 
+@app.get("/v1/billing/plans")
+def billing_plans() -> dict:
+    from app.plans import PRODUCTS, plan_catalog
+
+    return {"plans": plan_catalog(), "products": list(PRODUCTS.values())}
+
+
+@app.get("/v1/billing")
+def billing_account(user: dict = Depends(require_user)) -> dict:
+    from app.billing import account_view
+
+    return account_view(user["id"])
+
+
+@app.post("/v1/billing/checkout")
+def billing_checkout(body: PlanIn, request: Request, user: dict = Depends(require_user)) -> dict:
+    from app.billing import BillingError, start_checkout
+
+    try:
+        return start_checkout(user["id"], body.plan, _return_base(request))
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+_last_sync: dict[str, float] = {}
+
+
+@app.post("/v1/billing/sync")
+def billing_sync(body: SyncIn, user: dict = Depends(require_user)) -> dict:
+    from app.billing import BillingError, account_view, confirm_checkout, payments_ready, sync_account
+
+    now = time.monotonic()
+    if payments_ready() and now - _last_sync.get(user["id"], 0.0) >= 2:
+        _last_sync[user["id"]] = now
+        try:
+            session_id = body.session_id.strip()
+            if session_id:
+                confirm_checkout(user["id"], session_id)
+            else:
+                sync_account(user["id"])
+        except BillingError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return account_view(user["id"])
+
+
+@app.post("/v1/billing/portal")
+def billing_portal(request: Request, user: dict = Depends(require_user)) -> dict:
+    from app.billing import BillingError, start_portal
+
+    try:
+        return {"url": start_portal(user["id"], _return_base(request))}
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+@app.post("/v1/billing/cancel")
+def billing_cancel(user: dict = Depends(require_user)) -> dict:
+    from app.billing import BillingError, account_view, cancel_plan
+
+    try:
+        cancel_plan(user["id"])
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return account_view(user["id"])
+
+
+@app.post("/v1/billing/resume")
+def billing_resume(user: dict = Depends(require_user)) -> dict:
+    from app.billing import BillingError, account_view, resume_plan
+
+    try:
+        resume_plan(user["id"])
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return account_view(user["id"])
+
+
+@app.post("/v1/billing/webhook")
+async def billing_webhook(request: Request) -> dict:
+    from app.billing import BillingError, apply_stripe_event
+
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    try:
+        await asyncio.to_thread(apply_stripe_event, payload, signature)
+    except BillingError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return {"received": True}
+
+
+@app.post("/v1/support")
+def support_request(body: SupportIn, user: dict = Depends(require_user)) -> dict:
+    from app.support import SupportError, submit_request
+
+    try:
+        return submit_request(user["id"], body.subject, body.message)
+    except SupportError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+
+
+def _return_base(request: Request) -> str:
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if origin.startswith("http://127.0.0.1") or origin.startswith("http://localhost"):
+        return origin
+    return public_api_url(str(request.base_url)).rstrip("/")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -344,32 +484,55 @@ def keys(user: dict = Depends(require_user)) -> dict:
 
 @app.post("/v1/keys")
 def make_key(body: KeyIn, user: dict = Depends(require_user)) -> dict:
+    from app.access import AccessError, check_team_workspace
+
     name = body.name.strip() or "default"
     team_id = body.team_id.strip() if isinstance(body.team_id, str) else ""
     try:
+        if team_id and member_of_team(user["id"], team_id):
+            check_team_workspace(team_id)
         created = create_api_key(user["id"], name, team_id or None)
+    except AccessError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return created
 
 
+def _with_state(team: dict) -> dict:
+    from app.access import team_state
+
+    state = team_state(team["id"])
+    return {**team, "active": state.active, "reason": state.reason}
+
+
 @app.get("/v1/teams")
 def teams(user: dict = Depends(require_user)) -> dict:
-    return {"teams": list_teams(user["id"])}
+    return {"teams": [_with_state(team) for team in list_teams(user["id"])]}
 
 
 @app.post("/v1/teams")
 def make_team(body: TeamIn, user: dict = Depends(require_user)) -> dict:
+    from app.access import AccessError, check_team_create
+
     try:
-        return create_team(user["id"], body.name)
+        check_team_create(user["id"])
+        return _with_state(create_team(user["id"], body.name))
+    except AccessError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/v1/teams/join")
 def join(body: JoinIn, user: dict = Depends(require_user)) -> dict:
+    from app.access import AccessError, check_team_join
+
     try:
-        return join_team(user["id"], body.code)
+        check_team_join(user["id"], body.code)
+        return _with_state(join_team(user["id"], body.code))
+    except AccessError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -462,6 +625,12 @@ def config_bundle(
 
 @app.post("/v1/capture/message")
 def capture_message(body: MessageIn, auth: dict = Depends(require_api_key)) -> dict:
+    if auth.get("workspace_type") == "team":
+        from app.access import team_state
+
+        state = team_state(str(auth.get("workspace_id") or ""))
+        if not state.active:
+            raise HTTPException(status_code=402, detail=state.reason)
     saved = save_message(
         source=body.source,
         session_id=body.session_id,

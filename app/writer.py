@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import timezone
 
 from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
@@ -34,6 +35,7 @@ def apply_batch(
     relationships: list[dict],
     memory_vectors: dict[str, list[float]],
     batch_message_ids: list[str],
+    retain_after=None,
 ) -> list[dict]:
     written: list[dict] = []
     for decision in decisions:
@@ -50,6 +52,7 @@ def apply_batch(
             project=project,
             decision=decision,
             vector=memory_vectors.get(normalize_text(decision["final_content"])),
+            retain_after=retain_after,
         )
         if not memory_id:
             continue
@@ -61,7 +64,7 @@ def apply_batch(
     return written
 
 
-def _apply_memory(conn, *, user_id: str, owner_type: str, owner_id: str, source: str, session_id: str, project: str, decision: dict, vector: list[float] | None) -> str:
+def _apply_memory(conn, *, user_id: str, owner_type: str, owner_id: str, source: str, session_id: str, project: str, decision: dict, vector: list[float] | None, retain_after=None) -> str:
     content = decision["final_content"]
     content_norm = normalize_text(content)
     if not content_norm:
@@ -70,11 +73,12 @@ def _apply_memory(conn, *, user_id: str, owner_type: str, owner_id: str, source:
     existing = _memory_by_norm(conn, owner_type, owner_id, content_norm)
     targets = [item for item in decision.get("target_memory_ids") or [] if item]
     if existing is not None:
-        memory_id = _prefer_active(conn, existing)
-        _supersede(conn, targets, memory_id, owner_type, owner_id)
-        if vector is not None and memory_id == str(existing[0]):
-            _upsert_vector(conn, memory_id, vector)
-        return memory_id
+        memory_id = _reuse_existing(conn, existing, targets, retain_after)
+        if memory_id:
+            supersede(conn, targets, memory_id, owner_type, owner_id, retain_after)
+            if vector is not None and memory_id == str(existing[0]):
+                _upsert_vector(conn, memory_id, vector)
+            return memory_id
     memory_id = str(uuid.uuid4())
     conn.execute("SAVEPOINT memory_insert")
     try:
@@ -109,19 +113,32 @@ def _apply_memory(conn, *, user_id: str, owner_type: str, owner_id: str, source:
         raced = _memory_by_norm(conn, owner_type, owner_id, content_norm)
         if raced is None:
             raise
-        memory_id = _prefer_active(conn, raced)
-        _supersede(conn, targets, memory_id, owner_type, owner_id)
-        return memory_id
+        memory_id = _reuse_existing(conn, raced, targets, retain_after)
+        if memory_id:
+            supersede(conn, targets, memory_id, owner_type, owner_id, retain_after)
+            return memory_id
+        return _apply_memory(
+            conn,
+            user_id=user_id,
+            owner_type=owner_type,
+            owner_id=owner_id,
+            source=source,
+            session_id=session_id,
+            project=project,
+            decision=decision,
+            vector=vector,
+            retain_after=retain_after,
+        )
     if vector is not None:
         _upsert_vector(conn, memory_id, vector)
-    _supersede(conn, targets, memory_id, owner_type, owner_id)
+    supersede(conn, targets, memory_id, owner_type, owner_id, retain_after)
     return memory_id
 
 
 def _memory_by_norm(conn, owner_type: str, owner_id: str, content_norm: str):
     return conn.execute(
         """
-        SELECT id::text, status, superseded_by::text
+        SELECT id::text, status, superseded_by::text, retain_from
         FROM memories
         WHERE owner_type = %s AND owner_id = %s AND content_norm = %s
         LIMIT 1
@@ -130,16 +147,23 @@ def _memory_by_norm(conn, owner_type: str, owner_id: str, content_norm: str):
     ).fetchone()
 
 
-def _prefer_active(conn, row) -> str:
-    """Keep the current fact when this exact text was already superseded."""
-    memory_id, status, superseded_by = row
+def _reuse_existing(conn, row, targets: list[str], retain_after) -> str:
+    """The memory an exact repeat belongs to, or "" once an expired copy is removed.
+
+    A repeat never moves the retention clock. Text the plan no longer keeps is
+    deleted, so the caller stores it again as a new memory.
+    """
+    memory_id, status, superseded_by, retain_from = row[0], row[1], row[2], row[3]
     if status == "superseded" and superseded_by:
-        active = conn.execute(
-            "SELECT id::text FROM memories WHERE id = %s AND status = 'active'",
-            (superseded_by,),
-        ).fetchone()
-        if active:
-            return active[0]
+        head = active_successor(conn, superseded_by)
+        if head is not None and head[0] not in targets:
+            if not expired(head[1], retain_after):
+                return head[0]
+            conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+            return ""
+    if expired(retain_from, retain_after):
+        conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+        return ""
     if status != "active":
         conn.execute(
             """
@@ -152,21 +176,62 @@ def _prefer_active(conn, row) -> str:
     return memory_id
 
 
-def _supersede(conn, targets: list[str], keeper: str, owner_type: str, owner_id: str) -> None:
-    doomed = [target for target in targets if target and target != keeper]
+def active_successor(conn, memory_id):
+    """Follow superseded_by to the memory that is current now."""
+    seen: set[str] = set()
+    current = str(memory_id) if memory_id else ""
+    for _hop in range(8):
+        if not current or current in seen:
+            return None
+        seen.add(current)
+        row = conn.execute(
+            "SELECT id::text, status, superseded_by::text, retain_from FROM memories WHERE id = %s",
+            (current,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row[1] == "active":
+            return row[0], row[3]
+        current = row[2]
+    return None
+
+
+def expired(retain_from, retain_after) -> bool:
+    if retain_after is None or retain_from is None:
+        return False
+    if retain_from.tzinfo is None:
+        retain_from = retain_from.replace(tzinfo=timezone.utc)
+    return retain_from < retain_after
+
+
+def supersede(conn, targets: list[str], keeper: str, owner_type: str, owner_id: str, retain_after=None) -> None:
+    """Retire targets in favour of keeper. Keeper takes the oldest retention clock among them."""
+    doomed = [str(target) for target in targets if target and str(target) != str(keeper)]
     if not doomed:
         return
     conn.execute(
         """
+        WITH doomed AS (
+            UPDATE memories
+            SET status = 'superseded', superseded_by = %s, updated_at = now()
+            WHERE id = ANY(%s::uuid[])
+              AND owner_type = %s
+              AND owner_id = %s
+              AND status = 'active'
+              AND id <> %s
+            RETURNING retain_from
+        )
         UPDATE memories
-        SET status = 'superseded', superseded_by = %s, updated_at = now()
-        WHERE id = ANY(%s::uuid[])
-          AND owner_type = %s
-          AND owner_id = %s
-          AND status = 'active'
-          AND id <> %s
+        SET retain_from = LEAST(
+            memories.retain_from,
+            (
+                SELECT min(d.retain_from) FROM doomed d
+                WHERE %s::timestamptz IS NULL OR d.retain_from >= %s::timestamptz
+            )
+        )
+        WHERE id = %s
         """,
-        (keeper, doomed, owner_type, owner_id, keeper),
+        (keeper, doomed, owner_type, owner_id, keeper, retain_after, retain_after, keeper),
     )
 
 

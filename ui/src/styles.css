@@ -1048,3 +1048,103 @@ h2 {
     flex-direction: column;
   }
 }
+
+.product-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 22px 0 8px;
+}
+
+.product-strip article {
+  border: 1px solid color-mix(in srgb, var(--silver) 35%, transparent);
+  padding: 16px 18px;
+}
+
+.product-strip h3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.product-strip h3 span,
+.product-strip .dim h3 span {
+  color: var(--red);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.product-strip p {
+  margin: 0;
+  color: var(--silver);
+}
+
+.product-strip .dim {
+  opacity: 0.55;
+}
+
+.team-usage,
+.support-form {
+  margin-top: 28px;
+}
+
+.team-usage ul {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--silver);
+}
+
+.support-form {
+  display: grid;
+  gap: 12px;
+  max-width: 560px;
+}
+
+.support-form textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+}
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.plan-grid .amount {
+  margin: 8px 0 12px;
+  font-size: 40px;
+  line-height: 1;
+}
+
+.plan-grid ul {
+  margin: 0 0 18px;
+  padding-left: 18px;
+  color: var(--silver);
+}
+
+.plan-grid li + li {
+  margin-top: 6px;
+}
+
+.plan-grid .card.current {
+  border-color: var(--red);
+}
+
+.plan-grid .hint,
+.band .hint {
+  margin-top: 18px;
+}
+
+@media (max-width: 900px) {
+  .plan-grid,
+  .product-strip {
+    grid-template-columns: 1fr;
+  }
+}

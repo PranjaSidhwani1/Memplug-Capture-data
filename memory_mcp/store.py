@@ -39,6 +39,8 @@ class MemoryStore:
         self.owner_id = user_id
         self.granted_domains = granted_domains
         self._url = database_url
+        self.retain_after = None
+        self.fetched = False
         with self._connect() as conn:
             self._ensure_schema(conn)
             conn.commit()
@@ -51,6 +53,8 @@ class MemoryStore:
         scoped.owner_id = user_id
         scoped.granted_domains = self.granted_domains
         scoped._url = self._url
+        scoped.retain_after = None
+        scoped.fetched = False
         return scoped
 
     def save(
@@ -149,7 +153,7 @@ class MemoryStore:
         try:
             vector = embed([text])[0]
             with self._connect() as conn:
-                scope, extra = _scope_sql(sub, kind)
+                scope, extra = _scope_sql(sub, kind, self.retain_after)
                 scope_params: list[object] = [owner[0], owner[1], selected, *extra]
                 vector_rows = conn.execute(
                     f"""
@@ -201,6 +205,7 @@ class MemoryStore:
                         vector=vector,
                         sub_domain=_norm(sub) if sub else "",
                         memory_type=kind,
+                        retain_after=self.retain_after,
                     )
                     conn.execute("RELEASE SAVEPOINT graph_hits")
                 except Exception:
@@ -212,6 +217,7 @@ class MemoryStore:
             log.exception("search_memory failed")
             return "Memory search failed."
 
+        self.fetched = True
         texts = _fuse(vector_rows, lexical_rows, limit, graph_rows)
         log.info("mcp search query=%s hits=%s", text, len(texts))
         return "\n".join(texts)
@@ -232,9 +238,10 @@ class MemoryStore:
                     WHERE owner_type = %s
                       AND owner_id = %s
                       AND status = 'active'
+                      AND (%s::timestamptz IS NULL OR retain_from >= %s::timestamptz)
                       AND domain <> ''
                     """,
-                    owner,
+                    (*owner, self.retain_after, self.retain_after),
                 ).fetchall()
         except Exception:
             log.exception("list_domains failed")
@@ -269,11 +276,12 @@ class MemoryStore:
                   AND owner_id = %s
                   AND domain = %s
                   AND status = 'active'
+                  AND (%s::timestamptz IS NULL OR retain_from >= %s::timestamptz)
                   AND sub_domain IS NOT NULL
                   AND sub_domain <> ''
                 ORDER BY sub_domain
                 """,
-                (*owner, resolved),
+                (*owner, resolved, self.retain_after, self.retain_after),
             ).fetchall()
         return {"domain": resolved, "sub_domains": [row[0] for row in rows]}
 
@@ -351,6 +359,12 @@ class MemoryStore:
         from app.graph_schema import ensure_graph_schema
 
         ensure_graph_schema(conn)
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS memories_owner_created_idx
+            ON memories (owner_type, owner_id, created_at)
+            """
+        )
 
     def _upsert(
         self,
@@ -364,18 +378,28 @@ class MemoryStore:
         source_event_ids: list[str],
         vector: list[float],
     ) -> dict:
+        from app.writer import active_successor, expired, supersede
+
         existing = conn.execute(
             """
-            SELECT id, status, superseded_by
+            SELECT id, status, superseded_by, retain_from
             FROM memories
             WHERE owner_type = %s AND owner_id = %s AND content_norm = %s
             LIMIT 1
             """,
             (self.owner_type, self.owner_id, content_norm),
         ).fetchone()
+        successor = None
+        if existing is not None:
+            if expired(existing[3], self.retain_after):
+                conn.execute("DELETE FROM memories WHERE id = %s", (existing[0],))
+                existing = None
+            elif existing[1] == "superseded" and existing[2]:
+                head = active_successor(conn, existing[2])
+                if head is not None and not expired(head[1], self.retain_after):
+                    successor = head[0]
         if existing is not None:
             memory_id = existing[0]
-            successor = existing[2] if existing[1] == "superseded" else None
             conn.execute(
                 """
                 UPDATE memories
@@ -398,15 +422,8 @@ class MemoryStore:
                 """,
                 (domain, sub_domain, memory_type, Jsonb(source_event_ids), memory_id),
             )
-            if successor is not None and successor != memory_id:
-                conn.execute(
-                    """
-                    UPDATE memories
-                    SET status = 'superseded', superseded_by = %s, updated_at = now()
-                    WHERE id = %s AND status = 'active'
-                    """,
-                    (memory_id, successor),
-                )
+            if successor is not None:
+                supersede(conn, [str(successor)], str(memory_id), self.owner_type, self.owner_id, self.retain_after)
             conn.execute(
                 """
                 INSERT INTO memory_vectors (memory_id, embedding)
@@ -426,52 +443,16 @@ class MemoryStore:
               AND m.owner_id = %s
               AND m.domain = %s
               AND m.status = 'active'
+              AND (%s::timestamptz IS NULL OR m.retain_from >= %s::timestamptz)
             ORDER BY v.embedding <=> %s::vector
             LIMIT 1
             """,
-            (vector, self.owner_type, self.owner_id, domain, vector),
+            (vector, self.owner_type, self.owner_id, domain, self.retain_after, self.retain_after, vector),
         ).fetchone()
 
+        retired = [str(successor)] if successor is not None else []
         if near is not None and float(near[1]) >= _SUPERSEDE_SIMILARITY:
-            memory_id = uuid.uuid4()
-            conn.execute(
-                """
-                INSERT INTO memories (
-                    id, user_id, owner_type, owner_id, domain, sub_domain, content, content_norm,
-                    memory_type, source, session_id, project, source_event_ids, status, created_at, updated_at
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, 'mcp', '', '', %s::jsonb, 'active', now(), now()
-                )
-                """,
-                (
-                    memory_id,
-                    self.user_id,
-                    self.owner_type,
-                    self.owner_id,
-                    domain,
-                    sub_domain,
-                    content,
-                    content_norm,
-                    memory_type,
-                    Jsonb(source_event_ids),
-                ),
-            )
-            conn.execute(
-                """
-                UPDATE memories
-                SET status = 'superseded', superseded_by = %s, updated_at = now()
-                WHERE id = %s AND status = 'active'
-                """,
-                (memory_id, near[0]),
-            )
-            conn.execute(
-                "INSERT INTO memory_vectors (memory_id, embedding) VALUES (%s, %s)",
-                (memory_id, vector),
-            )
-            return {"status": "saved", "id": str(memory_id), "domain": domain, "sub_domain": sub_domain}
-
+            retired.append(str(near[0]))
         memory_id = uuid.uuid4()
         conn.execute(
             """
@@ -501,6 +482,7 @@ class MemoryStore:
             "INSERT INTO memory_vectors (memory_id, embedding) VALUES (%s, %s)",
             (memory_id, vector),
         )
+        supersede(conn, retired, str(memory_id), self.owner_type, self.owner_id, self.retain_after)
         return {"status": "saved", "id": str(memory_id), "domain": domain, "sub_domain": sub_domain}
 
     def _workspace(self) -> tuple[str, str] | dict:
@@ -526,7 +508,7 @@ class MemoryStore:
         return selected
 
 
-def _scope_sql(sub: str, kind: str) -> tuple[str, list[object]]:
+def _scope_sql(sub: str, kind: str, retain_after=None) -> tuple[str, list[object]]:
     sql = """
         m.owner_type = %s
         AND m.owner_id = %s
@@ -534,6 +516,9 @@ def _scope_sql(sub: str, kind: str) -> tuple[str, list[object]]:
         AND m.status = 'active'
     """
     params: list[object] = []
+    if retain_after is not None:
+        sql += " AND m.retain_from >= %s"
+        params.append(retain_after)
     if sub:
         sql += " AND lower(regexp_replace(coalesce(m.sub_domain, ''), '\\s+', ' ', 'g')) = %s"
         params.append(_norm(sub))

@@ -102,6 +102,42 @@ export function removeMemory(token, id) {
   return request(`/v1/data/memories/${encodeURIComponent(id)}`, { method: "DELETE", token });
 }
 
+export function billingPlans() {
+  return request("/v1/billing/plans");
+}
+
+export function billingAccount(token) {
+  return request("/v1/billing", { token });
+}
+
+export function startCheckout(token, plan) {
+  return request("/v1/billing/checkout", { method: "POST", token, body: { plan } });
+}
+
+export function syncBilling(token, sessionId = "") {
+  return request("/v1/billing/sync", {
+    method: "POST",
+    token,
+    body: { session_id: sessionId || "" },
+  });
+}
+
+export function openPortal(token) {
+  return request("/v1/billing/portal", { method: "POST", token });
+}
+
+export function cancelPlan(token) {
+  return request("/v1/billing/cancel", { method: "POST", token });
+}
+
+export function resumePlan(token) {
+  return request("/v1/billing/resume", { method: "POST", token });
+}
+
+export function submitSupport(token, subject, message) {
+  return request("/v1/support", { method: "POST", token, body: { subject, message } });
+}
+
 export async function downloadBundle(token, tool, osName, keyId) {
   const params = new URLSearchParams({ tool, os: osName, key_id: keyId });
   const response = await fetch(`/v1/config/bundle?${params}`, {

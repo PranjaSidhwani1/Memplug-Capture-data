@@ -112,25 +112,43 @@ def _upsert_memory(
 
 
 def list_memories(user_id: str, team_ids: list[str]) -> list[dict]:
-    """Personal memories, plus every team this account belongs to."""
+    """Personal memories, plus every team this account belongs to, inside each plan's retention."""
     if not postgres_url() or not user_id:
         return []
-    teams = [team_id for team_id in team_ids if team_id]
+    from app.access import expires_at, owner_window
+
+    owners = [("user", user_id)] + [("team", team_id) for team_id in dict.fromkeys(team_ids) if team_id]
+    windows = {owner: owner_window(*owner) for owner in owners}
+    clauses = []
+    params: list[object] = []
+    for (kind, owner), (cutoff, _days) in windows.items():
+        clauses.append(
+            """
+            (
+                owner_type = %s AND owner_id = %s AND status = 'active'
+                AND (%s::timestamptz IS NULL OR retain_from >= %s::timestamptz)
+            )
+            """
+        )
+        params.extend([kind, owner, cutoff, cutoff])
     sql = """
         SELECT id::text, owner_type, owner_id, domain, COALESCE(sub_domain, ''),
-               content, memory_type, source, project, session_id, created_at, updated_at
+               content, memory_type, source, project, session_id, created_at, updated_at,
+               retain_from
         FROM memories
-        WHERE owner_type = 'user' AND owner_id = %s AND status = 'active'
-    """
-    params: list[object] = [user_id]
-    if teams:
-        sql += " OR (owner_type = 'team' AND owner_id = ANY(%s) AND status = 'active')"
-        params.append(teams)
-    sql += " ORDER BY updated_at DESC, created_at DESC"
+        WHERE
+    """ + " OR ".join(clauses) + " ORDER BY updated_at DESC, created_at DESC"
     with _connect() as conn:
         _ensure_schema(conn)
         rows = conn.execute(sql, params).fetchall()
-    return [_memory_out(row) for row in rows]
+    listed = []
+    for row in rows:
+        item = _memory_out(row)
+        kind = "team" if row[1] == "team" else "user"
+        days = windows.get((kind, row[2]), (None, None))[1]
+        item["expires_at"] = _iso(expires_at(row[12], days))
+        listed.append(item)
+    return listed
 
 
 def delete_memory(memory_id: str, user_id: str, team_ids: list[str]) -> bool:
@@ -245,6 +263,12 @@ def _ensure_schema(conn) -> None:
             """
             CREATE INDEX IF NOT EXISTS memories_owner_domain_idx
             ON memories (owner_type, owner_id, domain)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS memories_owner_created_idx
+            ON memories (owner_type, owner_id, created_at)
             """
         )
         conn.execute(

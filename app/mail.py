@@ -37,7 +37,7 @@ def send_reset_code(email: str, code: str) -> None:
     )
 
 
-def send_mail(to: str, subject: str, body: str) -> None:
+def send_mail(to: str, subject: str, body: str, reply_to: str | None = None) -> None:
     host = smtp_host()
     if not host:
         raise MailError("email is not configured")
@@ -45,6 +45,8 @@ def send_mail(to: str, subject: str, body: str) -> None:
     message["From"] = mail_from()
     message["To"] = to
     message["Subject"] = subject
+    if reply_to:
+        message["Reply-To"] = reply_to
     message.set_content(body)
     try:
         with smtplib.SMTP(host, smtp_port(), timeout=20) as smtp:

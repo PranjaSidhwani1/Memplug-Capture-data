@@ -101,7 +101,7 @@ def save_memory(
 
     Returns status saved, needs_review, rejected, or retryable_error.
     """
-    store = _store()
+    store, _held = _open_store()
     if isinstance(store, dict):
         return store
     return store.save(
@@ -133,15 +133,18 @@ def search_memory(
     Returns the matching memory text, concatenated. An empty result means
     nothing matched. Nothing outside the grant is returned.
     """
-    store = _store()
+    store, held = _open_store(fetch=True)
     if isinstance(store, dict):
         return str(store.get("reason") or "memory search failed")
-    return store.search_memories(
-        query=query,
-        domains=domains,
-        sub_domain=sub_domain,
-        memory_type=memory_type,
-    )
+    try:
+        return store.search_memories(
+            query=query,
+            domains=domains,
+            sub_domain=sub_domain,
+            memory_type=memory_type,
+        )
+    finally:
+        _finish_fetch(store, held)
 
 
 @mcp.tool()
@@ -161,10 +164,13 @@ def get_user_context(task: str, domains: list[str] | None = None) -> str:
     The API key chooses the workspace. A personal key loads that user's
     memories. A team key loads only that team's memories.
     """
-    store = _store()
+    store, held = _open_store(fetch=True)
     if isinstance(store, dict):
         return str(store.get("reason") or "memory search failed")
-    return store.user_context(task, domains)
+    try:
+        return store.user_context(task, domains)
+    finally:
+        _finish_fetch(store, held)
 
 
 @mcp.tool()
@@ -174,7 +180,7 @@ def list_domains() -> dict:
     A personal key lists that user's domains. A team key lists only that
     team's domains. A domain with no memories there is omitted.
     """
-    store = _store()
+    store, _held = _open_store()
     if isinstance(store, dict):
         return store
     return store.list_domains()
@@ -188,7 +194,7 @@ def list_sub_domains(domain: str) -> dict:
     example Travel → Japan Trip. Call list_domains first if you do not know
     a valid domain name.
     """
-    store = _store()
+    store, _held = _open_store()
     if isinstance(store, dict):
         return store
     return store.list_sub_domains(domain)
@@ -223,6 +229,46 @@ def _store() -> MemoryStore | dict:
     store = _database().for_user(user_id)
     store.owner_type, store.owner_id = _request_workspace()
     return store
+
+
+def _open_store(fetch: bool = False):
+    """The scoped store, plus the memory fetch held for it when fetch is True.
+
+    Only search_memory and get_user_context are memory fetches. Free counts them per day.
+    """
+    store = _store()
+    if isinstance(store, dict):
+        return store, None
+    from app.config import mongo_configured
+
+    if not mongo_configured():
+        return store, None
+    from app.access import limit_message, reserve_fetch, workspace_access
+
+    try:
+        access = workspace_access(store.user_id, store.owner_type, store.owner_id)
+        if not access.allowed:
+            return {"status": "rejected", "reason": access.reason}, None
+        held = reserve_fetch(access) if fetch else None
+    except Exception:
+        log.exception("plan check failed")
+        return {"status": "retryable_error", "reason": "The plan check failed. Try again in a moment."}, None
+    if fetch and held is None:
+        return {"status": "rejected", "reason": limit_message(access)}, None
+    store.retain_after = access.retain_after
+    return store, held
+
+
+def _finish_fetch(store: MemoryStore, held) -> None:
+    """Give the fetch back when the search did not run."""
+    if held is None or store.fetched:
+        return
+    from app.access import release_fetch
+
+    try:
+        release_fetch(held)
+    except Exception:
+        log.exception("memory fetch was not released")
 
 
 def _database() -> MemoryStore:

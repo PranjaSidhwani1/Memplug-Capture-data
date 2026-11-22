@@ -24,10 +24,15 @@ def process_batch(messages: list[dict], job_id: str | None = None, job_ids: list
     workspace_type = str(anchor.get("workspace_type") or "user")
     workspace_id = str(anchor.get("workspace_id") or user_id)
     if workspace_type == "team":
+        from app.access import team_state
         from app.users import member_of_team
 
         if not member_of_team(user_id, workspace_id):
             log.info("skipped team batch user=%s workspace=%s", user_id, workspace_id)
+            _mark_jobs_done(tokens)
+            return
+        if not team_state(workspace_id).active:
+            log.info("skipped batch for a team without Enterprise workspace=%s", workspace_id)
             _mark_jobs_done(tokens)
             return
     owner_type = "team" if workspace_type == "team" else "user"
@@ -36,17 +41,29 @@ def process_batch(messages: list[dict], job_id: str | None = None, job_ids: list
     source = str(anchor.get("source") or "")
     session_id = str(anchor.get("session_id") or "")
 
+    from app.access import cutoff_for_owner
     from app.extract import extract_candidates, propose_decisions
     from app.memories import _connect, _ensure_schema, embed_texts
+    from app.writer import expired
 
+    retain_after = cutoff_for_owner(owner_type, owner_id)
+    messages = [
+        item
+        for item in messages
+        if not expired(item.get("inserted_at"), retain_after) and not expired(item.get("created_at"), retain_after)
+    ]
+    if not messages:
+        log.info("skipped batch older than the plan keeps session=%s", session_id)
+        _mark_jobs_done(tokens)
+        return
     _store_message_embeddings(messages, embed_texts)
     query_vector = _vector(embed_texts, _batch_text(messages))
     with _connect() as conn:
         _ensure_schema(conn)
-        context = build_context(conn, messages, query_vector)
+        context = build_context(conn, messages, query_vector, retain_after)
     extracted = extract_candidates(context)
     candidates = extracted["memory_candidates"]
-    retrieved = _retrieve_for_candidates(candidates, embed_texts, owner_type, owner_id, project)
+    retrieved = _retrieve_for_candidates(candidates, embed_texts, owner_type, owner_id, project, retain_after)
     proposals = propose_decisions(candidates, retrieved, context) if candidates else []
     decisions = align_decisions(candidates, proposals, retrieved)
     entity_vectors = _entity_vectors(extracted["entity_candidates"], embed_texts)
@@ -81,6 +98,7 @@ def process_batch(messages: list[dict], job_id: str | None = None, job_ids: list
             relationships=relationships,
             memory_vectors=memory_vectors,
             batch_message_ids=[str(item["id"]) for item in messages if item.get("id")],
+            retain_after=retain_after,
         )
         _mark_jobs_done(tokens, conn)
     log.info(
@@ -94,7 +112,7 @@ def process_batch(messages: list[dict], job_id: str | None = None, job_ids: list
     )
 
 
-def _retrieve_for_candidates(candidates: list[dict], embed_texts, owner_type: str, owner_id: str, project: str) -> dict[str, list[dict]]:
+def _retrieve_for_candidates(candidates: list[dict], embed_texts, owner_type: str, owner_id: str, project: str, retain_after=None) -> dict[str, list[dict]]:
     if not candidates:
         return {}
     from app.memories import _connect, _ensure_schema
@@ -111,6 +129,7 @@ def _retrieve_for_candidates(candidates: list[dict], embed_texts, owner_type: st
                 project=project,
                 scope=str(candidate.get("scope") or "user"),
                 vector=vector,
+                retain_after=retain_after,
             )
     return found
 

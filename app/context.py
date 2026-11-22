@@ -12,13 +12,13 @@ _MEMORIES = 8
 _MAX_MESSAGES = 16
 
 
-def build_context(conn, messages: list[dict], query_vector: list[float] | None) -> dict:
+def build_context(conn, messages: list[dict], query_vector: list[float] | None, retain_after=None) -> dict:
     """Current batch, a short session window, and a few related memories."""
     if not messages:
         return {"project": "", "workspace_id": "", "workspace_type": "user", "source": "", "messages": [], "memories": []}
     anchor = messages[-1]
     batch_ids = [str(item["id"]) for item in messages]
-    earlier = _earlier_messages(conn, anchor, batch_ids, query_vector)
+    earlier = _earlier_messages(conn, anchor, batch_ids, query_vector, retain_after)
     combined = _dedupe(earlier + [_public_message(item) for item in messages])
     combined.sort(key=lambda item: item.get("created_at") or "")
     if len(combined) > _MAX_MESSAGES:
@@ -33,6 +33,7 @@ def build_context(conn, messages: list[dict], query_vector: list[float] | None) 
             scope="user",
             vector=query_vector,
             limit=_MEMORIES,
+            retain_after=retain_after,
         )
     return {
         "project": str(anchor.get("project_id") or ""),
@@ -44,13 +45,15 @@ def build_context(conn, messages: list[dict], query_vector: list[float] | None) 
     }
 
 
-def _earlier_messages(conn, anchor: dict, batch_ids: list[str], query_vector: list[float] | None) -> list[dict]:
+def _earlier_messages(conn, anchor: dict, batch_ids: list[str], query_vector: list[float] | None, retain_after=None) -> list[dict]:
     params = (
         anchor.get("user_id"),
         anchor.get("workspace_id"),
         anchor.get("source"),
         anchor.get("session_id"),
         batch_ids,
+        retain_after,
+        retain_after,
     )
     rows = conn.execute(
         """
@@ -58,6 +61,7 @@ def _earlier_messages(conn, anchor: dict, batch_ids: list[str], query_vector: li
         FROM messages
         WHERE user_id = %s AND workspace_id = %s AND source = %s AND session_id = %s
           AND NOT (id = ANY(%s::uuid[]))
+          AND (%s::timestamptz IS NULL OR LEAST(inserted_at, created_at) >= %s::timestamptz)
         ORDER BY created_at DESC
         LIMIT %s
         """,
@@ -72,6 +76,7 @@ def _earlier_messages(conn, anchor: dict, batch_ids: list[str], query_vector: li
             JOIN message_embeddings e ON e.message_id = m.id
             WHERE m.user_id = %s AND m.workspace_id = %s AND m.source = %s AND m.session_id = %s
               AND NOT (m.id = ANY(%s::uuid[]))
+              AND (%s::timestamptz IS NULL OR LEAST(m.inserted_at, m.created_at) >= %s::timestamptz)
             ORDER BY e.embedding <=> %s::vector
             LIMIT %s
             """,

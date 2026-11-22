@@ -35,12 +35,16 @@ def fuse_rows(groups: list, limit: int) -> list[str]:
     return texts
 
 
-def similar_memories(conn, *, owner_type: str, owner_id: str, project: str, scope: str, vector: list[float], limit: int = 5) -> list[dict]:
+def similar_memories(conn, *, owner_type: str, owner_id: str, project: str, scope: str, vector: list[float], limit: int = 5, retain_after=None) -> list[dict]:
     project_sql = ""
     params: list[object] = [owner_type, owner_id]
     if scope == "project" and project:
         project_sql = " AND m.project = %s"
         params.append(project)
+    retain_sql = ""
+    if retain_after is not None:
+        retain_sql = " AND m.retain_from >= %s"
+        params.append(retain_after)
     rows = conn.execute(
         f"""
         SELECT m.id::text, m.content, 1 - (v.embedding <=> %s::vector) AS similarity
@@ -50,6 +54,7 @@ def similar_memories(conn, *, owner_type: str, owner_id: str, project: str, scop
           AND m.owner_id = %s
           AND m.status = 'active'
           {project_sql}
+          {retain_sql}
         ORDER BY v.embedding <=> %s::vector
         LIMIT %s
         """,
@@ -72,6 +77,7 @@ def graph_hits(
     limit: int = _GRAPH_POOL,
     sub_domain: str = "",
     memory_type: str = "",
+    retain_after=None,
 ) -> list[tuple[str, str]]:
     """Memories reached by entity name and a short walk across active relationships."""
     if not domains:
@@ -88,6 +94,9 @@ def graph_hits(
     if memory_type:
         extra += " AND m.memory_type = %s"
         params.append(memory_type)
+    if retain_after is not None:
+        extra += " AND m.retain_from >= %s"
+        params.append(retain_after)
     params.append(limit)
     rows = conn.execute(
         f"""

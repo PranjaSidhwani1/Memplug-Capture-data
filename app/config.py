@@ -33,6 +33,10 @@ def mongo_uri() -> str:
     return uri
 
 
+def mongo_configured() -> bool:
+    return bool(os.environ.get("MONGODB_URI", "").strip())
+
+
 def mongo_db() -> str:
     return os.environ.get("MONGODB_DB", "memplug").strip() or "memplug"
 
@@ -123,6 +127,19 @@ def smtp_password() -> str:
 
 def mail_configured() -> bool:
     return bool(smtp_host() and smtp_password())
+
+
+def stripe_secret() -> str:
+    return os.environ.get("STRIPE_SECRET_KEY", "").strip()
+
+
+def stripe_webhook_secret() -> str:
+    return os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()
+
+
+def support_email() -> str:
+    """Inbox that receives support requests from the console."""
+    return os.environ.get("MEMPLUG_SUPPORT_EMAIL", "").strip() or "pranjaysidhwani@gmail.com"
 
 
 def public_api_url(fallback: str) -> str:

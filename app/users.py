@@ -7,6 +7,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from pymongo.errors import DuplicateKeyError
 
+from app.plans import effective_plan
 from app.security import (
     hash_api_key,
     hash_password,
@@ -64,6 +65,8 @@ def public_user(doc: dict) -> dict:
         "email": doc["email"],
         "name": doc.get("name") or "",
         "created_at": doc.get("created_at") or "",
+        "plan": effective_plan(doc),
+        "plan_status": doc.get("plan_status") or "none",
     }
 
 
@@ -75,6 +78,10 @@ def create_user(email: str, password: str, name: str) -> dict:
         "password_salt": salt,
         "password_hash": digest,
         "created_at": _now(),
+        "plan": "free",
+        "plan_status": "none",
+        "stripe_customer_id": "",
+        "stripe_subscription_id": "",
     }
     try:
         result = _users().insert_one(document)
@@ -207,6 +214,17 @@ def _teams():
 def _members():
     ensure_indexes()
     return database()["team_members"]
+
+
+def team_owner(team_id: str) -> str:
+    try:
+        oid = ObjectId(team_id)
+    except InvalidId:
+        return ""
+    doc = _teams().find_one({"_id": oid}, {"created_by": 1})
+    if not doc:
+        return ""
+    return str(doc.get("created_by") or "")
 
 
 def create_team(user_id: str, name: str) -> dict:

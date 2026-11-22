@@ -21,10 +21,22 @@ def ensure_graph_schema(conn) -> None:
     _jobs(conn)
     _candidates(conn)
     _graph(conn)
+    _retention_indexes(conn)
     _vector_indexes(conn)
 
 
 def _memory_history(conn) -> None:
+    # Retention counts from retain_from, the first time a fact was stored. Rewording keeps it.
+    conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS retain_from TIMESTAMPTZ")
+    conn.execute("UPDATE memories SET retain_from = created_at WHERE retain_from IS NULL")
+    conn.execute("ALTER TABLE memories ALTER COLUMN retain_from SET DEFAULT now()")
+    conn.execute("ALTER TABLE memories ALTER COLUMN retain_from SET NOT NULL")
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS memories_owner_retain_idx
+        ON memories (owner_type, owner_id, retain_from)
+        """
+    )
     conn.execute("ALTER TABLE memories ADD COLUMN IF NOT EXISTS status TEXT")
     conn.execute("UPDATE memories SET status = 'active' WHERE status IS NULL OR status = ''")
     conn.execute("ALTER TABLE memories ALTER COLUMN status SET DEFAULT 'active'")
@@ -368,6 +380,21 @@ def _graph(conn) -> None:
         )
         """
     )
+
+
+def _retention_indexes(conn) -> None:
+    """Lookups the hourly retention purge makes for each account."""
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS messages_workspace_inserted_idx ON messages (workspace_type, workspace_id, inserted_at)",
+        "CREATE INDEX IF NOT EXISTS memory_candidates_owner_created_idx ON memory_candidates (owner_type, owner_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS memory_candidates_job_idx ON memory_candidates (job_id)",
+        "CREATE INDEX IF NOT EXISTS memory_evidence_message_idx ON memory_evidence (message_id)",
+        "CREATE INDEX IF NOT EXISTS relationship_evidence_message_idx ON relationship_evidence (message_id)",
+        "CREATE INDEX IF NOT EXISTS memory_entities_entity_idx ON memory_entities (entity_id)",
+        "CREATE INDEX IF NOT EXISTS entity_relationships_source_all_idx ON entity_relationships (source_entity_id)",
+        "CREATE INDEX IF NOT EXISTS entity_relationships_target_all_idx ON entity_relationships (target_entity_id)",
+    ):
+        conn.execute(statement)
 
 
 def _vector_indexes(conn) -> None:

@@ -174,7 +174,8 @@ def _load_messages(conn, message_ids: list) -> list[dict]:
     rows = conn.execute(
         """
         SELECT id::text, user_id, workspace_id, workspace_type, session_id, source, project_id,
-               role, content, tool_name, tool_use_id, tool_input, tool_status, created_at
+               role, content, tool_name, tool_use_id, tool_input, tool_status, created_at,
+               inserted_at
         FROM messages
         WHERE id = ANY(%s::uuid[])
         ORDER BY created_at, inserted_at
@@ -199,6 +200,7 @@ def _load_messages(conn, message_ids: list) -> list[dict]:
                 "tool_input": row[11] or "",
                 "tool_status": row[12] or "",
                 "created_at": row[13],
+                "inserted_at": row[14],
             }
         )
     return loaded
