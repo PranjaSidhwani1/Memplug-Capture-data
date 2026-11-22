@@ -11,13 +11,21 @@ import {
   listTeams,
   login,
   me,
+  openPortal,
   removeMemory,
   requestReset,
   resetPassword,
+  resumePlan,
   revokeKey,
   signup,
+  startCheckout,
   storedToken,
   storeToken,
+  submitSupport,
+  syncBilling,
+  billingPlans,
+  billingAccount,
+  cancelPlan,
   verifyOtp,
 } from "./api.js";
 
@@ -150,6 +158,9 @@ function ProductPage({ onSession }) {
           <button type="button" className={page === "overview" ? "on" : ""} onClick={() => setPage("overview")}>
             Overview
           </button>
+          <button type="button" className={page === "pricing" ? "on" : ""} onClick={() => setPage("pricing")}>
+            Pricing
+          </button>
           <button type="button" className={page === "docs" ? "on" : ""} onClick={() => setPage("docs")}>
             Docs
           </button>
@@ -165,7 +176,9 @@ function ProductPage({ onSession }) {
         </div>
       </header>
       <main>
-        {page === "docs" ? (
+        {page === "pricing" ? (
+          <Pricing onStart={() => setAuth("signup")} />
+        ) : page === "docs" ? (
           <section className="band open" id="configure">
             <div className="section-head">
               <p className="eyebrow">Docs</p>
@@ -647,6 +660,413 @@ function DataView({ token, teams }) {
   );
 }
 
+const FALLBACK_PRODUCTS = [
+  {
+    id: "personal",
+    name: "Personal AI memory",
+    summary: "Capture from Cursor, Claude Code, and Codex. Your agents recall it through MCP.",
+    available: true,
+  },
+  {
+    id: "team",
+    name: "Shared team memory",
+    summary: "Team workspaces, join codes, and team keys that never read personal memory.",
+    available: true,
+  },
+  {
+    id: "apps",
+    name: "App memory",
+    summary: "Connectors for everyday apps such as Spotify and Zepto.",
+    available: false,
+  },
+];
+
+const FALLBACK_PLANS = [
+  {
+    id: "free",
+    name: "Free",
+    price_label: "$0",
+    period: "forever",
+    points: [
+      "Personal AI memory",
+      "App memory when it ships",
+      "Memories kept for 15 days",
+      "100 memory fetches a day",
+    ],
+  },
+  {
+    id: "pro",
+    name: "Pro",
+    price_label: "$19",
+    period: "per month",
+    points: [
+      "Personal AI memory",
+      "App memory when it ships",
+      "Memories kept for 6 months",
+      "Unlimited memory fetches",
+    ],
+  },
+  {
+    id: "enterprise",
+    name: "Enterprise",
+    price_label: "$99",
+    period: "per month",
+    points: [
+      "Shared team memory: 5 teams, 25 members each",
+      "Everything in Pro for your own account",
+      "Memories kept until you delete them",
+      "Unlimited memory fetches",
+      "Priority support requests from the console",
+    ],
+  },
+];
+
+function formatWhen(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function Pricing({ onStart }) {
+  const [plans, setPlans] = useState(FALLBACK_PLANS);
+  const [products, setProducts] = useState(FALLBACK_PRODUCTS);
+
+  useEffect(() => {
+    let cancelled = false;
+    billingPlans()
+      .then((payload) => {
+        if (cancelled) return;
+        if (payload.plans?.length) setPlans(payload.plans);
+        if (payload.products?.length) setProducts(payload.products);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section className="band open">
+      <div className="section-head">
+        <p className="eyebrow">Pricing</p>
+        <h2>Three plans</h2>
+      </div>
+      <p className="lede tight">
+        Free and Pro cover personal AI memory and app memory. Shared team memory is Enterprise only. Card checkout opens after you sign in.
+      </p>
+      <div className="product-strip">
+        {products.map((product) => (
+          <article key={product.id}>
+            <h3>
+              {product.name}
+              {!product.available ? <span>Coming soon</span> : null}
+            </h3>
+            <p>{product.summary}</p>
+          </article>
+        ))}
+      </div>
+      <div className="plan-grid">
+        {plans.map((plan) => (
+          <article className="card" key={plan.id}>
+            <header>
+              <h3>{plan.name}</h3>
+              <span>{plan.period}</span>
+            </header>
+            <p className="amount">{plan.price_label}</p>
+            <ul>
+              {plan.points.map((point) => (
+                <li key={point}>{point}</li>
+              ))}
+            </ul>
+            <button className="primary" type="button" onClick={onStart}>
+              {plan.id === "free" ? "Create a free account" : `Get ${plan.name}`}
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PlanView({ token }) {
+  const [account, setAccount] = useState(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState("");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function load() {
+    const payload = await billingAccount(token);
+    setAccount(payload);
+    return payload;
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const flag = params.get("billing");
+    const sessionId = params.get("session_id") || "";
+    if (flag || sessionId) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("billing");
+      url.searchParams.delete("session_id");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    if (flag === "cancel") {
+      setNotice("Checkout was canceled. The current plan is unchanged.");
+      load().catch((err) => setError(err.message));
+      return;
+    }
+    if (flag === "return") {
+      setNotice("Back from the billing portal.");
+    }
+    const start = flag === "success" || Boolean(sessionId) ? syncBilling(token, sessionId) : load();
+    start
+      .then((payload) => {
+        setAccount(payload);
+        if (flag === "success") {
+          setNotice(
+            payload.plan === "free"
+              ? "Payment is confirmed with Stripe. Refreshing the plan again if it is still catching up."
+              : `You are on ${payload.plan_name}.`,
+          );
+        }
+      })
+      .catch((err) => setError(err.message));
+  }, [token]);
+
+  useEffect(() => {
+    if (!account || account.plan !== "free") return undefined;
+    const paramsHadSuccess = notice.includes("catching up");
+    if (!paramsHadSuccess) return undefined;
+    const timer = window.setInterval(() => {
+      syncBilling(token)
+        .then((payload) => {
+          setAccount(payload);
+          if (payload.plan !== "free") {
+            setNotice(`You are on ${payload.plan_name}.`);
+            window.clearInterval(timer);
+          }
+        })
+        .catch(() => {});
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [account, notice, token]);
+
+  async function choose(plan) {
+    setError("");
+    setNotice("");
+    setBusy(plan.id);
+    try {
+      if (plan.id === "free") {
+        const ok = window.confirm(
+          "Stop renewing at the end of this billing period? You keep the paid plan until then. After that, Free retention applies and older memories are removed.",
+        );
+        if (!ok) return;
+        const payload = await cancelPlan(token);
+        setAccount(payload);
+        setNotice(
+          payload.subscription?.cancel_at
+            ? `Renewal stops on ${formatWhen(payload.subscription.cancel_at)}. You stay on ${payload.plan_name} until then.`
+            : "Renewal is set to stop at the end of the paid period.",
+        );
+        return;
+      }
+      const payload = await startCheckout(token, plan.id);
+      if (payload.url) {
+        window.location.assign(payload.url);
+        return;
+      }
+      const refreshed = await load();
+      if (payload.status === "changed") setNotice(`Switched to ${refreshed.plan_name}.`);
+      else if (payload.status === "resumed") setNotice("Renewal is on again.");
+      else if (payload.status === "action_required") {
+        setNotice("Stripe needs another card confirmation for that upgrade.");
+      } else {
+        setNotice(`You are on ${refreshed.plan_name}.`);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function resume() {
+    setError("");
+    setBusy("resume");
+    try {
+      const payload = await resumePlan(token);
+      setAccount(payload);
+      setNotice("Renewal is on again.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function manage() {
+    setError("");
+    setBusy("portal");
+    try {
+      const payload = await openPortal(token);
+      window.location.assign(payload.url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendSupport(event) {
+    event.preventDefault();
+    setError("");
+    setBusy("support");
+    try {
+      const payload = await submitSupport(token, subject, message);
+      setSubject("");
+      setMessage("");
+      setNotice(
+        payload.priority
+          ? "Priority support request sent."
+          : payload.emailed
+            ? "Support request sent."
+            : "Support request saved. Mail is not configured on the server yet.",
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const usage = account
+    ? account.fetch_limit == null
+      ? `${account.fetches_today} memory fetches today. No daily cap.`
+      : `${account.fetches_today} of ${account.fetch_limit} memory fetches used today.`
+    : "";
+  const subscription = account?.subscription;
+  const cancelAt = subscription?.cancel_at;
+
+  return (
+    <section className="band open">
+      <div className="section-head">
+        <p className="eyebrow">Plan</p>
+        <h2>{account?.plan_name || "Plan"}</h2>
+      </div>
+      {account && (
+        <p className="lede tight">
+          Memories are kept for {account.retention_label.toLowerCase()}. {usage}
+          {subscription?.status === "past_due" ? " The last card payment failed." : ""}
+          {cancelAt ? ` Renewal stops on ${formatWhen(cancelAt)}.` : ""}
+          {subscription?.pending_change ? " A plan change is waiting on Stripe." : ""}
+          {account.grant ? ` Memplug also granted ${account.grant.plan}${account.grant.until ? ` until ${formatWhen(account.grant.until)}` : ""}.` : ""}
+        </p>
+      )}
+      {account?.products?.length ? (
+        <div className="product-strip">
+          {account.products.map((product) => (
+            <article key={product.id} className={product.included ? "" : "dim"}>
+              <h3>
+                {product.name}
+                {!product.available ? <span>Coming soon</span> : null}
+                {product.included ? <span>Included</span> : <span>Not on this plan</span>}
+              </h3>
+              <p>{product.summary}</p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {account && !account.payments_ready && (
+        <p className="notice status">Card checkout is waiting for STRIPE_SECRET_KEY on the server.</p>
+      )}
+      {(error || notice) && <p className={error ? "error status" : "notice status"}>{error || notice}</p>}
+      <div className="plan-grid">
+        {(account?.plans || []).map((plan) => {
+          const current = account?.plan === plan.id;
+          return (
+            <article className={current ? "card current" : "card"} key={plan.id}>
+              <header>
+                <h3>{plan.name}</h3>
+                <span>{current ? "current" : plan.period}</span>
+              </header>
+              <p className="amount">{plan.price_label}</p>
+              <ul>
+                {plan.points.map((point) => (
+                  <li key={point}>{point}</li>
+                ))}
+              </ul>
+              {current ? (
+                cancelAt ? (
+                  <button className="primary" type="button" disabled={Boolean(busy)} onClick={resume}>
+                    {busy === "resume" ? "Resuming" : "Keep renewing"}
+                  </button>
+                ) : (
+                  <button type="button" disabled>
+                    Current plan
+                  </button>
+                )
+              ) : (
+                <button className="primary" type="button" disabled={Boolean(busy)} onClick={() => choose(plan)}>
+                  {busy === plan.id
+                    ? "Working"
+                    : plan.id === "free"
+                      ? "Stop renewing"
+                      : `Upgrade to ${plan.name}`}
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {account?.teams?.length ? (
+        <div className="team-usage">
+          <h3>Team memory usage</h3>
+          <p className="lede tight">Each team has its own daily fetch counter. The owner&apos;s Enterprise plan pays for it.</p>
+          <ul>
+            {account.teams.map((team) => (
+              <li key={team.id}>
+                <strong>{team.name}</strong>
+                {team.active
+                  ? ` · ${team.fetches_today} fetches today`
+                  : ` · inactive · ${team.reason || "Enterprise required"}`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {account?.can_manage && (
+        <p className="hint">
+          <button type="button" onClick={manage} disabled={busy === "portal"}>
+            Manage card and invoices
+          </button>
+        </p>
+      )}
+      <form className="support-form" onSubmit={sendSupport}>
+        <h3>{account?.priority_support ? "Priority support" : "Support"}</h3>
+        <p>
+          {account?.priority_support
+            ? "Enterprise requests are marked priority and emailed to Memplug."
+            : "Send a request from the console. Enterprise marks them as priority."}
+        </p>
+        <label>
+          Subject
+          <input value={subject} onChange={(event) => setSubject(event.target.value)} maxLength={120} required />
+        </label>
+        <label>
+          Message
+          <textarea value={message} onChange={(event) => setMessage(event.target.value)} maxLength={5000} rows={4} required />
+        </label>
+        <button className="primary" type="submit" disabled={busy === "support"}>
+          {busy === "support" ? "Sending" : "Send request"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function belongsToWorkspace(item, workspace) {
   const kind = item.workspace_type || "user";
   if (!workspace) return kind !== "team";
@@ -685,7 +1105,10 @@ function Console({ token, user, onSignOut }) {
   const [keyBusy, setKeyBusy] = useState(false);
   const [teamBusy, setTeamBusy] = useState(false);
   const [downloading, setDownloading] = useState("");
-  const [page, setPage] = useState("console");
+  const [page, setPage] = useState(() => {
+    const flag = new URLSearchParams(window.location.search).get("billing");
+    return flag ? "plan" : "console";
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -863,6 +1286,9 @@ function Console({ token, user, onSignOut }) {
           <button type="button" className={page === "data" ? "on" : ""} onClick={() => setPage("data")}>
             Data
           </button>
+          <button type="button" className={page === "plan" ? "on" : ""} onClick={() => setPage("plan")}>
+            Plan
+          </button>
           <button type="button" className={page === "docs" ? "on" : ""} onClick={() => setPage("docs")}>
             Docs
           </button>
@@ -877,7 +1303,9 @@ function Console({ token, user, onSignOut }) {
       </header>
       {(error || notice) && <p className={error ? "error status" : "notice status"}>{error || notice}</p>}
       <main className="desk">
-        {page === "data" ? (
+        {page === "plan" ? (
+          <PlanView token={token} />
+        ) : page === "data" ? (
           <DataView token={token} teams={teams} />
         ) : page === "docs" ? (
         <section className="band open" id="process">
@@ -952,9 +1380,13 @@ function Console({ token, user, onSignOut }) {
             {teams.map((item) => (
               <article key={item.id} className={workspace === item.id ? "space on" : "space"}>
                 <button type="button" className="space-pick" onClick={() => setWorkspace(item.id)}>
-                  <span>{item.role === "owner" ? "Owner" : "Member"}</span>
+                  <span>{item.role === "owner" ? "Owner" : "Member"}{item.active === false ? " · inactive" : ""}</span>
                   <strong>{item.name}</strong>
-                  <p>Team memory only. A key made while this card is open belongs to {item.name}.</p>
+                  <p>
+                    {item.active === false
+                      ? item.reason || "Shared team memory needs an active Enterprise plan on the owner's account."
+                      : `Team memory only. A key made while this card is open belongs to ${item.name}.`}
+                  </p>
                 </button>
                 {item.role === "owner" ? (
                   <div className="code-row">
@@ -974,7 +1406,7 @@ function Console({ token, user, onSignOut }) {
           <div className="team-actions">
             <form onSubmit={makeTeam}>
               <h3>Create a team</h3>
-              <p>You become the owner. The card shows a join code you can send.</p>
+              <p>Shared team memory is Enterprise only. You become the owner, and the card shows a join code.</p>
               <label>
                 Team name
                 <input
